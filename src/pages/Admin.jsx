@@ -224,6 +224,26 @@ function PuppiesTab() {
     fetchAll()
   }
 
+  async function handleUnreserve(puppy) {
+    if (!confirm(`Mark ${puppy.name} as available again and clear their reservation?`)) return
+    setSaving(true)
+    setMessage('')
+
+    // Clear puppy status
+    await supabase.from('puppies').update({ status: 'available' }).eq('id', puppy.id)
+
+    // Find and clear the waitlist entry that selected this puppy
+    await supabase.from('waitlist').update({
+      selected_puppy_id: null,
+      pending_approval: false,
+      is_active: true
+    }).eq('selected_puppy_id', puppy.id)
+
+    setMessage(`${puppy.name} is now available again.`)
+    fetchAll()
+    setSaving(false)
+  }
+
   if (loading) return <p style={{ color: '#888' }}>Loading...</p>
 
   return (
@@ -286,6 +306,9 @@ function PuppiesTab() {
               {p.status === 'reserved' && reservers[p.id] && <p style={{ fontSize: '0.8rem', color: '#888' }}>Reserved by {reservers[p.id]}</p>}
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flexShrink: 0 }}>
+              {p.status === 'reserved' && (
+                <button onClick={() => handleUnreserve(p)} style={{ ...btnStyle, background: '#fff4e5', color: '#b36200', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Unreserve</button>
+              )}
               <button onClick={() => startEdit(p)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Edit</button>
               <button onClick={() => handleDelete(p.id)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Delete</button>
             </div>
@@ -614,6 +637,25 @@ function WaitlistTab() {
     setSaving(false)
   }
 
+  async function handleUnselect(person) {
+    if (!confirm(`Remove ${person.name}'s selection of ${person.puppies?.name} and make the puppy available again?`)) return
+    setSaving(true)
+    setMessage('')
+
+    await Promise.all([
+      supabase.from('waitlist').update({
+        selected_puppy_id: null,
+        pending_approval: false,
+        is_active: true
+      }).eq('id', person.id),
+      supabase.from('puppies').update({ status: 'available' }).eq('id', person.selected_puppy_id)
+    ])
+
+    setMessage(`${person.name}'s selection has been cleared. They can pick again.`)
+    fetchAll()
+    setSaving(false)
+  }
+
   if (loading) return <p style={{ color: '#888' }}>Loading...</p>
 
   return (
@@ -692,6 +734,9 @@ function WaitlistTab() {
               </p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flexShrink: 0 }}>
+              {(w.selected_puppy_id || w.pending_approval) && (
+                <button onClick={() => handleUnselect(w)} style={{ ...btnStyle, background: '#fff4e5', color: '#b36200', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Unselect</button>
+              )}
               <button onClick={() => startEdit(w)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Edit</button>
               <button onClick={() => handleDelete(w.id)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Delete</button>
             </div>
