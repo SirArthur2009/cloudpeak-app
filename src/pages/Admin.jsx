@@ -585,9 +585,33 @@ function WaitlistTab() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove this person from the waitlist?')) return
+    if (!confirm('Remove this person from the waitlist and delete their account?')) return
+    setSaving(true)
+
+    // Find the person first so we have their email
+    const person = waitlist.find(w => w.id === id)
+
+    // Delete their auth account
+    if (person?.email) {
+      try {
+        await fetch(`${FUNCTIONS_URL}/delete-client-user`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`
+          },
+          body: JSON.stringify({ email: person.email })
+        })
+      } catch (err) {
+        console.error('Failed to delete auth user:', err)
+      }
+    }
+
+    // Delete waitlist row
     await supabase.from('waitlist').delete().eq('id', id)
     fetchAll()
+    setSaving(false)
   }
 
   if (loading) return <p style={{ color: '#888' }}>Loading...</p>
