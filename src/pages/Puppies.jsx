@@ -135,8 +135,8 @@ export default function Puppies() {
             }}>
               {/* Photo */}
               {puppy.photo_url
-                ? <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', height: '200px', objectFit: 'cover' }} />
-                : <div style={{ width: '100%', height: '200px', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
+                ? <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
+                : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
               }
 
               {/* Info */}

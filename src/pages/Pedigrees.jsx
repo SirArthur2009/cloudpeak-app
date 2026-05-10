@@ -31,7 +31,6 @@ export default function Pedigrees() {
         Browse our dogs and view their pedigree records.
       </p>
 
-      {/* Search */}
       <input
         type="text"
         placeholder="Search by name..."
@@ -39,7 +38,7 @@ export default function Pedigrees() {
         onChange={e => setSearch(e.target.value)}
         style={{
           padding: '0.6rem 1rem', border: '1px solid #ddd',
-          borderRadius: '6px', fontSize: '0.95rem',
+          borderRadius: '6px', fontSize: '1rem',
           width: '100%', maxWidth: '360px', marginBottom: '1.5rem'
         }}
       />
@@ -47,7 +46,6 @@ export default function Pedigrees() {
       {loading && <p style={{ color: '#888' }}>Loading...</p>}
       {!loading && filtered.length === 0 && <p style={{ color: '#888' }}>No dogs found.</p>}
 
-      {/* Dog cards */}
       <div style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
@@ -60,23 +58,31 @@ export default function Pedigrees() {
             style={{
               background: '#fff', border: '1px solid #e0e0e0',
               borderRadius: '10px', overflow: 'hidden',
-              cursor: 'pointer', transition: 'box-shadow 0.15s',
+              cursor: 'pointer'
             }}
             onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.08)'}
             onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
           >
             {dog.photo_url
-              ? <img src={dog.photo_url} alt={dog.name} style={{ width: '100%', height: '180px', objectFit: 'cover' }} />
-              : <div style={{ width: '100%', height: '180px', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
+              ? <img src={dog.photo_url} alt={dog.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
+              : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
             }
             <div style={{ padding: '1rem' }}>
               <p style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem' }}>{dog.name}</p>
               {dog.registration_number && (
-                <p style={{ color: '#888', fontSize: '0.8rem' }}>Reg: {dog.registration_number}</p>
+                <p style={{ color: '#888', fontSize: '0.8rem', marginBottom: '0.5rem' }}>Reg: {dog.registration_number}</p>
               )}
-              {dog.pedigree_url && (
-                <p style={{ color: '#555', fontSize: '0.85rem', marginTop: '0.4rem' }}>📄 Pedigree available</p>
-              )}
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                {dog.pedigree_url && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '20px', background: '#f0f0f0', color: '#555' }}>📄 Pedigree</span>
+                )}
+                {dog.embark_url && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '20px', background: '#ede9ff', color: '#5b4fcf' }}>Embark</span>
+                )}
+                {dog.ofa_url && (
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, padding: '0.15rem 0.5rem', borderRadius: '20px', background: '#e6f4ea', color: '#1a6b3c' }}>OFA</span>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -98,7 +104,8 @@ export default function Pedigrees() {
             style={{
               background: '#fff', borderRadius: '12px',
               maxWidth: '520px', width: '100%',
-              overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.18)'
+              overflow: 'hidden', boxShadow: '0 8px 40px rgba(0,0,0,0.18)',
+              maxHeight: '90vh', overflowY: 'auto'
             }}
           >
             {selected.photo_url && (
@@ -123,24 +130,42 @@ export default function Pedigrees() {
                 <p style={{ color: '#555', fontSize: '0.9rem', marginBottom: '1rem' }}>{selected.notes}</p>
               )}
 
-              {selected.pedigree_url ? (
-                <a
-                  href={selected.pedigree_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  style={{
-                    display: 'inline-block',
-                    padding: '0.6rem 1.2rem',
-                    background: '#1a1a1a', color: '#fff',
-                    borderRadius: '6px', fontSize: '0.9rem',
-                    textDecoration: 'none'
-                  }}
-                >
-                  View Pedigree
-                </a>
-              ) : (
-                <p style={{ color: '#aaa', fontSize: '0.85rem' }}>No pedigree on file.</p>
-              )}
+              {/* Action buttons */}
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginTop: '1rem' }}>
+                {selected.pedigree_url && (
+                  <a
+                    href={selected.pedigree_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'inline-block', padding: '0.6rem 1.2rem', background: '#1a1a1a', color: '#fff', borderRadius: '6px', fontSize: '0.9rem', textDecoration: 'none' }}
+                  >
+                    📄 View Pedigree
+                  </a>
+                )}
+                {selected.embark_url && (
+                  <a
+                    href={selected.embark_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'inline-block', padding: '0.6rem 1.2rem', background: '#5b4fcf', color: '#fff', borderRadius: '6px', fontSize: '0.9rem', textDecoration: 'none' }}
+                  >
+                    Embark Profile
+                  </a>
+                )}
+                {selected.ofa_url && (
+                  <a
+                    href={selected.ofa_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ display: 'inline-block', padding: '0.6rem 1.2rem', background: '#1a6b3c', color: '#fff', borderRadius: '6px', fontSize: '0.9rem', textDecoration: 'none' }}
+                  >
+                    OFA Profile
+                  </a>
+                )}
+                {!selected.pedigree_url && !selected.embark_url && !selected.ofa_url && (
+                  <p style={{ color: '#aaa', fontSize: '0.85rem' }}>No records on file.</p>
+                )}
+              </div>
             </div>
           </div>
         </div>
