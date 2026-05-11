@@ -1,6 +1,21 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+
+async function callFunction(name, body) {
+  const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SERVICE_KEY}`
+    },
+    body: JSON.stringify(body)
+  })
+  return res.json()
+}
+
 const statusColors = {
   available: { bg: '#e6f4ea', color: '#2d7a3a' },
   reserved: { bg: '#fff4e5', color: '#b36200' },
@@ -13,23 +28,21 @@ export default function Puppies() {
   const [filter, setFilter] = useState('all')
   const [activePerson, setActivePerson] = useState(null)
   const [isMyTurn, setIsMyTurn] = useState(false)
-  const [reservingId, setReservingId] = useState(null)
-  const [reserveMessage, setReserveMessage] = useState('')
+  const [selectedPuppy, setSelectedPuppy] = useState(null)
+  const [confirmed, setConfirmed] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
-    async function fetchPuppies() {
+    async function fetchAll() {
       const [puppiesRes, activeRes] = await Promise.all([
         supabase.from('puppies').select('*, litters(name)').order('id'),
         supabase.from('waitlist').select('*').eq('is_active', true).limit(1)
       ])
 
       if (puppiesRes.error) console.error('Supabase error:', puppiesRes.error)
-      else {
-        console.log('Puppies data:', puppiesRes.data)
-        setPuppies(puppiesRes.data || [])
-      }
+      else setPuppies(puppiesRes.data || [])
 
-      if (activeRes.error) console.error('Waitlist error:', activeRes.error)
       const active = activeRes.data?.[0] || null
       setActivePerson(active)
 
@@ -41,33 +54,43 @@ export default function Puppies() {
 
       setLoading(false)
     }
-    fetchPuppies()
+    fetchAll()
   }, [])
 
-  async function handleReserve(puppy) {
-    if (!activePerson) return
-    if (!window.confirm(`Reserve ${puppy.name}?`)) return
+  async function handleConfirmSelection() {
+    if (!selectedPuppy || !activePerson) return
+    setSaving(true)
+    setError('')
 
-    setReservingId(puppy.id)
-    setReserveMessage('')
+    // Set pending approval — don't reserve yet
+    const { error } = await supabase
+      .from('waitlist')
+      .update({
+        selected_puppy_id: selectedPuppy.id,
+        is_active: false,
+        pending_approval: true
+      })
+      .eq('id', activePerson.id)
 
-    const [{ error: waitlistError }, { error: puppyError }] = await Promise.all([
-      supabase.from('waitlist').update({ selected_puppy_id: puppy.id, is_active: false }).eq('id', activePerson.id),
-      supabase.from('puppies').update({ status: 'reserved' }).eq('id', puppy.id)
-    ])
-
-    setReservingId(null)
-
-    if (waitlistError || puppyError) {
-      console.error(waitlistError || puppyError)
-      setReserveMessage('Unable to reserve this puppy. Please try again.')
+    if (error) {
+      setError('Something went wrong. Please try again.')
+      console.error(error)
+      setSaving(false)
       return
     }
 
-    setReserveMessage(`${puppy.name} is reserved for you!`)
-    setIsMyTurn(false)
-    setActivePerson(null)
-    setPuppies(prev => prev.map(p => p.id === puppy.id ? { ...p, status: 'reserved' } : p))
+    // Email admins
+    try {
+      await callFunction('send-reservation-email', {
+        clientName: activePerson.name,
+        puppyName: selectedPuppy.name
+      })
+    } catch (err) {
+      console.error('Email failed:', err)
+    }
+
+    setConfirmed(true)
+    setSaving(false)
   }
 
   const filtered = filter === 'all'
@@ -84,7 +107,7 @@ export default function Puppies() {
       </p>
 
       {/* Filter buttons */}
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         {['all', 'available', 'reserved', 'sold'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
             padding: '0.4rem 1rem',
@@ -101,22 +124,48 @@ export default function Puppies() {
         ))}
       </div>
 
-      {isMyTurn && (
-        <div style={{ marginBottom: '1rem', padding: '1rem', background: '#f0faf2', border: '1px solid #cde4d5', borderRadius: '10px' }}>
-          <p style={{ margin: 0, fontWeight: 600 }}>It's your turn on the waitlist.</p>
-          <p style={{ margin: '0.4rem 0 0', color: '#555' }}>Reserve any available puppy below to lock it in.</p>
+      {/* It's the logged-in user's turn */}
+      {isMyTurn && !confirmed && (
+        <div style={{ background: '#f0faf2', border: '1px solid #b2dfb8', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+          <p style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem' }}>🎉 It's your turn to pick!</p>
+          <p style={{ color: '#555', fontSize: '0.9rem' }}>Click a puppy below to select it, then confirm your request.</p>
         </div>
       )}
 
-      {reserveMessage && (
-        <p style={{ color: '#2d7a3a', marginBottom: '1.5rem' }}>{reserveMessage}</p>
+      {/* Confirmation message */}
+      {confirmed && (
+        <div style={{ background: '#fff8e5', border: '1px solid #ffe08a', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+          <p style={{ fontWeight: 600, fontSize: '1rem' }}>✅ Your request for {selectedPuppy?.name} has been submitted!</p>
+          <p style={{ color: '#555', fontSize: '0.9rem', marginTop: '0.25rem' }}>We'll review your selection and confirm shortly.</p>
+        </div>
       )}
+
+      {/* Selected puppy confirm bar */}
+      {isMyTurn && !confirmed && selectedPuppy && (
+        <div style={{ background: '#fff', border: '2px solid #1a1a1a', borderRadius: '10px', padding: '1rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+          <p style={{ fontWeight: 600 }}>Selected: {selectedPuppy.name}</p>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={handleConfirmSelection}
+              disabled={saving}
+              style={{ padding: '0.55rem 1.2rem', background: '#2d7a3a', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600 }}
+            >
+              {saving ? 'Submitting...' : `Request ${selectedPuppy.name}`}
+            </button>
+            <button
+              onClick={() => setSelectedPuppy(null)}
+              style={{ padding: '0.55rem 1rem', background: '#fff', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {error && <p style={{ color: 'red', marginBottom: '1rem' }}>{error}</p>}
 
       {loading && <p style={{ color: '#888' }}>Loading puppies...</p>}
-
-      {!loading && filtered.length === 0 && (
-        <p style={{ color: '#888' }}>No puppies found.</p>
-      )}
+      {!loading && filtered.length === 0 && <p style={{ color: '#888' }}>No puppies found.</p>}
 
       {/* Puppy cards */}
       <div style={{
@@ -126,20 +175,30 @@ export default function Puppies() {
       }}>
         {filtered.map(puppy => {
           const s = statusColors[puppy.status] || statusColors.sold
+          const isSelected = selectedPuppy?.id === puppy.id
           return (
-            <div key={puppy.id} style={{
-              background: '#fff',
-              border: '1px solid #e0e0e0',
-              borderRadius: '10px',
-              overflow: 'hidden'
-            }}>
-              {/* Photo */}
+            <div
+              key={puppy.id}
+              onClick={() => {
+                if (isMyTurn && !confirmed && puppy.status === 'available') {
+                  setSelectedPuppy(isSelected ? null : puppy)
+                }
+              }}
+              style={{
+                background: '#fff',
+                border: isSelected ? '2px solid #1a1a1a' : '1px solid #e0e0e0',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                cursor: isMyTurn && !confirmed && puppy.status === 'available' ? 'pointer' : 'default',
+                transform: isSelected ? 'scale(1.02)' : 'none',
+                transition: 'all 0.15s'
+              }}
+            >
               {puppy.photo_url
                 ? <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
                 : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
               }
 
-              {/* Info */}
               <div style={{ padding: '1rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
                   <span style={{ fontWeight: 600, fontSize: '1rem' }}>{puppy.name}</span>
@@ -159,25 +218,10 @@ export default function Puppies() {
                 {puppy.notes && (
                   <p style={{ color: '#666', fontSize: '0.85rem', marginTop: '0.5rem' }}>{puppy.notes}</p>
                 )}
-
-                {puppy.status === 'available' && isMyTurn && (
-                  <button
-                    onClick={() => handleReserve(puppy)}
-                    disabled={reservingId === puppy.id}
-                    style={{
-                      marginTop: '1rem',
-                      width: '100%',
-                      padding: '0.65rem 0.8rem',
-                      borderRadius: '8px',
-                      border: 'none',
-                      background: '#1a1a1a',
-                      color: '#fff',
-                      cursor: 'pointer',
-                      fontWeight: 600
-                    }}
-                  >
-                    {reservingId === puppy.id ? 'Reserving...' : 'Reserve'}
-                  </button>
+                {isMyTurn && !confirmed && puppy.status === 'available' && (
+                  <p style={{ color: '#888', fontSize: '0.8rem', marginTop: '0.5rem', fontStyle: 'italic' }}>
+                    {isSelected ? '✓ Selected — confirm above' : 'Click to select'}
+                  </p>
                 )}
               </div>
             </div>

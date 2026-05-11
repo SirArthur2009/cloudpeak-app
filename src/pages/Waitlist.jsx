@@ -66,6 +66,8 @@ export default function Waitlist() {
   }, [])
 
   async function handleConfirmSelection() {
+    console.log('SERVICE_KEY exists:', !!SERVICE_KEY)
+    console.log('FUNCTIONS_URL:', FUNCTIONS_URL)
     if (!selectedPuppy || !activePerson) return
     setSaving(true)
     setError('')

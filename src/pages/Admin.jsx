@@ -2,6 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+const PORTAL_URL = import.meta.env.VITE_PORTAL_URL
+
 const inputStyle = {
   padding: '0.6rem', border: '1px solid #ddd',
   borderRadius: '6px', fontSize: '16px', width: '100%'
@@ -12,6 +16,17 @@ const btnStyle = {
   border: 'none', cursor: 'pointer', fontSize: '0.9rem'
 }
 
+async function callFunction(name, body) {
+  const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SERVICE_KEY}`
+    },
+    body: JSON.stringify(body)
+  })
+  return res.json()
+}
 // ── Upload a single file to Supabase storage ──
 async function uploadFile(bucket, file) {
   const ext = file.name.split('.').pop()
@@ -1007,9 +1022,6 @@ function DogsTab() {
   )
 }
 
-// ── WAITLIST TAB (preserved from original) ──
-const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
-
 function WaitlistTab() {
   const [waitlist, setWaitlist] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1081,13 +1093,26 @@ function WaitlistTab() {
   }
 
   async function handleMoveToNext() {
-    if (!nextInLine) return
-    setSaving(true)
-    await supabase.from('waitlist').update({ is_active: true }).eq('id', nextInLine.id)
-    setMessage(`${nextInLine.name} can now pick their puppy.`)
-    fetchAll()
-    setSaving(false)
+  if (!nextInLine) return
+  if (!confirm(`Let ${nextInLine.name} choose their puppy now?`)) return
+  setSaving(true)
+  setMessage('')
+  await supabase.from('waitlist').update({ is_active: true }).eq('id', nextInLine.id)
+  try {
+    const result = await callFunction('send-turn-email', {
+      clientName: nextInLine.name,
+      clientEmail: nextInLine.email,
+      portalUrl: PORTAL_URL
+    })
+    console.log('send-turn-email result:', result)
+    setMessage(`${nextInLine.name} has been notified and can now choose their puppy.`)
+  } catch (err) {
+    console.error('send-turn-email error:', err)
+    setMessage(`${nextInLine.name} is now active. Email failed — notify them manually.`)
   }
+  fetchAll()
+  setSaving(false)
+}
 
   async function handleUnselect(person) {
     if (!confirm(`Clear ${person.name}'s selection?`)) return
@@ -1102,16 +1127,12 @@ function WaitlistTab() {
   }
 
   async function handleDelete(id) {
-    if (!confirm('Remove this person from the waitlist?')) return
+    if (!confirm('Remove this person from the waitlist and delete their account?')) return
     setSaving(true)
     const person = waitlist.find(w => w.id === id)
     if (person?.email) {
       try {
-        await fetch(`${FUNCTIONS_URL}/delete-client-user`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-          body: JSON.stringify({ email: person.email })
-        })
+        await callFunction('delete-client-user', { email: person.email })
       } catch (err) { console.error('Failed to delete auth user:', err) }
     }
     await supabase.from('waitlist').delete().eq('id', id)
