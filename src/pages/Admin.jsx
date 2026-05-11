@@ -12,6 +12,21 @@ const btnStyle = {
   border: 'none', cursor: 'pointer', fontSize: '0.9rem'
 }
 
+const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
+const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+
+async function callFunction(name, body) {
+  const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${SERVICE_KEY}`
+    },
+    body: JSON.stringify(body)
+  })
+  return res.json()
+}
+
 async function uploadFile(bucket, file) {
   const ext = file.name.split('.').pop()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
@@ -44,22 +59,21 @@ function PhotoUpload({ value, onChange, bucket }) {
   }
 
   async function getCroppedBlob(imageSrc, pixelCrop) {
-  const image = await new Promise((res, rej) => {
-    const img = new Image()
-    img.onload = () => res(img)
-    img.onerror = rej
-    img.src = imageSrc
-  })
-  const canvas = document.createElement('canvas')
-  canvas.width = pixelCrop.width
-  canvas.height = pixelCrop.height
-  const ctx = canvas.getContext('2d')
-  // Fill white background before drawing
-  ctx.fillStyle = '#ffffff'
-  ctx.fillRect(0, 0, canvas.width, canvas.height)
-  ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height)
-  return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92))
-}
+    const image = await new Promise((res, rej) => {
+      const img = new Image()
+      img.onload = () => res(img)
+      img.onerror = rej
+      img.src = imageSrc
+    })
+    const canvas = document.createElement('canvas')
+    canvas.width = pixelCrop.width
+    canvas.height = pixelCrop.height
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#ffffff'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height)
+    return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92))
+  }
 
   async function handleCropConfirm() {
     setUploading(true)
@@ -486,7 +500,6 @@ function WaitlistTab() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
-  const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
   const PORTAL_URL = import.meta.env.VITE_PORTAL_URL
 
   useEffect(() => { fetchAll() }, [])
@@ -515,16 +528,13 @@ function WaitlistTab() {
   async function handleSave() {
     setSaving(true)
     setMessage('')
+
     if (editing === 'new') {
       if (!form.password) { setMessage('Error: Please set a password for this client.'); setSaving(false); return }
-      const res = await fetch(`${FUNCTIONS_URL}/create-client-user`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({ email: form.email, password: form.password, name: form.name })
-      })
-      const result = await res.json()
+      const result = await callFunction('create-client-user', { email: form.email, password: form.password, name: form.name })
       if (result.error) { setMessage('Error creating account: ' + result.error); setSaving(false); return }
     }
+
     const payload = { name: form.name, email: form.email, phone: form.phone, position: form.position || null, notes: form.notes }
     const { error } = editing === 'new' ? await supabase.from('waitlist').insert(payload) : await supabase.from('waitlist').update(payload).eq('id', editing)
     if (error) setMessage('Error: ' + error.message)
@@ -539,11 +549,7 @@ function WaitlistTab() {
     setMessage('')
     await supabase.from('waitlist').update({ is_active: true }).eq('id', nextInLine.id)
     try {
-      await fetch(`${FUNCTIONS_URL}/send-turn-email`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-        body: JSON.stringify({ clientName: nextInLine.name, clientEmail: nextInLine.email, portalUrl: PORTAL_URL })
-      })
+      await callFunction('send-turn-email', { clientName: nextInLine.name, clientEmail: nextInLine.email, portalUrl: PORTAL_URL })
       setMessage(`${nextInLine.name} has been notified and can now choose their puppy.`)
     } catch (err) {
       setMessage(`${nextInLine.name} is now active. Email failed — notify them manually.`)
@@ -584,11 +590,7 @@ function WaitlistTab() {
     const person = waitlist.find(w => w.id === id)
     if (person?.email) {
       try {
-        await fetch(`${FUNCTIONS_URL}/delete-client-user`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY, 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}` },
-          body: JSON.stringify({ email: person.email })
-        })
+        await callFunction('delete-client-user', { email: person.email })
       } catch (err) { console.error('Failed to delete auth user:', err) }
     }
     await supabase.from('waitlist').delete().eq('id', id)
