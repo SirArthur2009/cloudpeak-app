@@ -7,6 +7,7 @@ import Waitlist from './pages/Waitlist'
 import Pedigrees from './pages/Pedigrees'
 import Admin from './pages/Admin'
 import Login from './pages/Login'
+import Analytics from './pages/Analytics'
 import './index.css'
 
 function useIsMobile() {
@@ -68,6 +69,7 @@ function App() {
               <NavLink to="/" style={activeLinkStyle}>Available Puppies</NavLink>
               <NavLink to="/pedigrees" style={activeLinkStyle}>Pedigrees</NavLink>
               <NavLink to="/waitlist" style={activeLinkStyle}>Waitlist</NavLink>
+              <NavLink to="/analytics" style={activeLinkStyle}>Analytics</NavLink>
               {role === 'admin' && (
                 <NavLink to="/admin" style={({ isActive }) => ({ ...activeLinkStyle({ isActive }), color: isActive ? '#1a1a1a' : '#888' })}>Admin</NavLink>
               )}
@@ -109,6 +111,7 @@ function App() {
             <NavLink to="/" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Available Puppies</NavLink>
             <NavLink to="/pedigrees" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Pedigrees</NavLink>
             <NavLink to="/waitlist" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Waitlist</NavLink>
+            <NavLink to="/analytics" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Analytics</NavLink>
             {role === 'admin' && (
               <NavLink to="/admin" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Admin</NavLink>
             )}
@@ -132,6 +135,7 @@ function App() {
           <Route path="/" element={<Puppies />} />
           <Route path="/pedigrees" element={<Pedigrees />} />
           <Route path="/waitlist" element={<Waitlist />} />
+          <Route path="/analytics" element={<Analytics />} />
           <Route path="/admin" element={role === 'admin' ? <Admin /> : <Navigate to="/" />} />
         </Routes>
       </main>
