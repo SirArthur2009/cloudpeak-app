@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 
@@ -1237,19 +1237,439 @@ function WaitlistTab() {
   )
 }
 
+function ApplicationsTab() {
+  const [applications, setApplications] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
+  const [controlsOpen, setControlsOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [sortBy, setSortBy] = useState('newest')
+  const [density, setDensity] = useState('comfortable')
+  const [showAddress, setShowAddress] = useState(true)
+  const [showPreferences, setShowPreferences] = useState(true)
+  const [showHomeLifestyle, setShowHomeLifestyle] = useState(true)
+  const [showQuestions, setShowQuestions] = useState(true)
+
+  useEffect(() => {
+    fetchApplications()
+  }, [])
+
+  useEffect(() => {
+    const onResize = () => setIsMobile(window.innerWidth < 768)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  async function fetchApplications() {
+    setLoading(true)
+    setError('')
+    const { data, error: fetchError } = await supabase
+      .from('applications')
+      .select('*')
+      .order('created_at', { ascending: false })
+
+    if (fetchError) {
+      setError(fetchError.message || 'Unable to load applications')
+      setApplications([])
+      setLoading(false)
+      return
+    }
+
+    setApplications(data || [])
+    setLoading(false)
+  }
+
+  function formatDate(value) {
+    if (!value) return 'Unknown date'
+    const date = new Date(value)
+    if (Number.isNaN(date.getTime())) return 'Unknown date'
+    return date.toLocaleString()
+  }
+
+  const statusCounts = useMemo(() => {
+    const counts = { total: applications.length, new: 0, reviewed: 0, archived: 0, other: 0 }
+    for (const app of applications) {
+      const status = (app.status || '').toLowerCase()
+      if (status === 'new') counts.new += 1
+      else if (status === 'reviewed') counts.reviewed += 1
+      else if (status === 'archived') counts.archived += 1
+      else counts.other += 1
+    }
+    return counts
+  }, [applications])
+
+  const filteredApplications = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    let list = [...applications]
+
+    if (statusFilter !== 'all') {
+      list = list.filter(app => (app.status || 'unknown').toLowerCase() === statusFilter)
+    }
+
+    if (q) {
+      list = list.filter(app => {
+        const haystack = [
+          app.first_name,
+          app.last_name,
+          app.email,
+          app.phone,
+          app.city,
+          app.state,
+          app.color_preference,
+          app.gender_preference,
+          app.registration_type,
+          app.how_found,
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+
+        return haystack.includes(q)
+      })
+    }
+
+    if (sortBy === 'oldest') {
+      list.sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime())
+    } else if (sortBy === 'name') {
+      list.sort((a, b) => {
+        const nameA = `${a.first_name || ''} ${a.last_name || ''}`.trim().toLowerCase()
+        const nameB = `${b.first_name || ''} ${b.last_name || ''}`.trim().toLowerCase()
+        return nameA.localeCompare(nameB)
+      })
+    } else {
+      list.sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+    }
+
+    return list
+  }, [applications, query, statusFilter, sortBy])
+
+  if (loading) return <p style={{ color: '#888' }}>Loading applications...</p>
+
+  const cardPadding = density === 'compact' ? '0.6rem 0.7rem' : '0.9rem 1rem'
+  const sectionGap = density === 'compact' ? '0.45rem' : '0.75rem'
+  const bodyColumns = isMobile ? '1fr' : 'minmax(0, 1.15fr) minmax(260px, 0.85fr)'
+  const controlPanel = (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.5rem' }}>
+        <div style={{ background: '#fff', border: '1px solid #ececec', borderRadius: '8px', padding: '0.5rem 0.65rem' }}>
+          <p style={{ fontSize: '0.72rem', color: '#777' }}>Total</p>
+          <p style={{ fontSize: '1rem', fontWeight: 700 }}>{statusCounts.total}</p>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #ececec', borderRadius: '8px', padding: '0.5rem 0.65rem' }}>
+          <p style={{ fontSize: '0.72rem', color: '#777' }}>New</p>
+          <p style={{ fontSize: '1rem', fontWeight: 700, color: '#2d7a3a' }}>{statusCounts.new}</p>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #ececec', borderRadius: '8px', padding: '0.5rem 0.65rem' }}>
+          <p style={{ fontSize: '0.72rem', color: '#777' }}>Reviewed</p>
+          <p style={{ fontSize: '1rem', fontWeight: 700, color: '#5555cc' }}>{statusCounts.reviewed}</p>
+        </div>
+        <div style={{ background: '#fff', border: '1px solid #ececec', borderRadius: '8px', padding: '0.5rem 0.65rem' }}>
+          <p style={{ fontSize: '0.72rem', color: '#777' }}>Archived/Other</p>
+          <p style={{ fontSize: '1rem', fontWeight: 700, color: '#666' }}>{statusCounts.archived + statusCounts.other}</p>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.65rem' }}>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: '#666', display: 'block', marginBottom: '0.2rem' }}>Search</label>
+          <input
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            style={{ ...inputStyle, fontSize: '0.88rem' }}
+            placeholder="Name, email, phone, city..."
+          />
+        </div>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: '#666', display: 'block', marginBottom: '0.2rem' }}>Status</label>
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...inputStyle, fontSize: '0.88rem' }}>
+            <option value="all">All</option>
+            <option value="new">New</option>
+            <option value="reviewed">Reviewed</option>
+            <option value="archived">Archived</option>
+            <option value="unknown">Unknown</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: '#666', display: 'block', marginBottom: '0.2rem' }}>Sort</label>
+          <select value={sortBy} onChange={e => setSortBy(e.target.value)} style={{ ...inputStyle, fontSize: '0.88rem' }}>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="name">Name A-Z</option>
+          </select>
+        </div>
+        <div>
+          <label style={{ fontSize: '0.78rem', color: '#666', display: 'block', marginBottom: '0.2rem' }}>Density</label>
+          <select value={density} onChange={e => setDensity(e.target.value)} style={{ ...inputStyle, fontSize: '0.88rem' }}>
+            <option value="comfortable">Comfortable</option>
+            <option value="compact">Compact</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: isMobile ? '0.55rem' : '0.9rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontSize: '0.78rem', color: '#666', width: isMobile ? '100%' : 'auto' }}>Visible sections:</span>
+        <label style={{ fontSize: '0.82rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <input type="checkbox" checked={showAddress} onChange={e => setShowAddress(e.target.checked)} /> Address
+        </label>
+        <label style={{ fontSize: '0.82rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <input type="checkbox" checked={showPreferences} onChange={e => setShowPreferences(e.target.checked)} /> Preferences
+        </label>
+        <label style={{ fontSize: '0.82rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <input type="checkbox" checked={showHomeLifestyle} onChange={e => setShowHomeLifestyle(e.target.checked)} /> Home & lifestyle
+        </label>
+        <label style={{ fontSize: '0.82rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+          <input type="checkbox" checked={showQuestions} onChange={e => setShowQuestions(e.target.checked)} /> Questions
+        </label>
+      </div>
+    </>
+  )
+
+  return (
+    <div>
+      <div style={{
+        background: 'linear-gradient(135deg, #ffffff 0%, #f8f7f1 100%)',
+        border: '1px solid #e9e2c7',
+        borderRadius: '18px',
+        padding: isMobile ? '1rem' : '1.15rem 1.2rem',
+        marginBottom: '1rem',
+        boxShadow: '0 10px 28px rgba(17, 24, 39, 0.06)'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: isMobile ? 'flex-start' : 'center', gap: '0.9rem', flexWrap: 'wrap' }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: '#8a6d1f', marginBottom: '0.35rem' }}>
+              Application inbox
+            </p>
+            <h3 style={{ fontWeight: 800, fontSize: isMobile ? '1.2rem' : '1.45rem', marginBottom: '0.25rem' }}>Applications</h3>
+            <p style={{ fontSize: '0.9rem', color: '#666', lineHeight: 1.55 }}>
+              Review every submission in one place, filter what matters, and scan the details quickly.
+            </p>
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.55rem', flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+            <button onClick={fetchApplications} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', minHeight: '42px', flex: isMobile ? 1 : 'none', padding: '0.65rem 1rem' }}>
+              Refresh
+            </button>
+            <button
+              onClick={() => {
+                setQuery('')
+                setStatusFilter('all')
+                setSortBy('newest')
+                setDensity('comfortable')
+                setShowAddress(true)
+                setShowPreferences(true)
+                setShowHomeLifestyle(true)
+                setShowQuestions(true)
+              }}
+              style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', minHeight: '42px', flex: isMobile ? 1 : 'none', padding: '0.65rem 1rem' }}
+            >
+              Reset
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: '0.65rem', marginTop: '1rem' }}>
+          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
+            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Total</p>
+            <p style={{ fontSize: '1.15rem', fontWeight: 800 }}>{statusCounts.total}</p>
+          </div>
+          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
+            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>New</p>
+            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#2d7a3a' }}>{statusCounts.new}</p>
+          </div>
+          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
+            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Reviewed</p>
+            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#5555cc' }}>{statusCounts.reviewed}</p>
+          </div>
+          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
+            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Archived / Other</p>
+            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#666' }}>{statusCounts.archived + statusCounts.other}</p>
+          </div>
+        </div>
+
+        <div style={{ marginTop: '1rem' }}>{controlPanel}</div>
+      </div>
+
+      <div style={{ background: 'linear-gradient(180deg, #fafafa 0%, #f6f6f6 100%)', border: '1px solid #e8e8e8', borderRadius: '12px', padding: isMobile ? '0.7rem' : '0.9rem', marginBottom: '1rem', display: 'grid', gap: '0.75rem' }}>
+        {isMobile ? (
+          <details open={controlsOpen} onToggle={(e) => setControlsOpen(e.currentTarget.open)}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, color: '#333', marginBottom: '0.65rem' }}>Filters & View Options</summary>
+            <div style={{ display: 'grid', gap: '0.75rem' }}>{controlPanel}</div>
+          </details>
+        ) : (
+          <div style={{ display: 'grid', gap: '0.75rem' }}>{controlPanel}</div>
+        )}
+      </div>
+
+      {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+
+      {!error && filteredApplications.length === 0 && (
+        <p style={{ color: '#888' }}>No applications found yet.</p>
+      )}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: density === 'compact' ? '0.55rem' : '0.8rem' }}>
+        {filteredApplications.map((app) => (
+          <details
+            key={app.id}
+            style={{
+              background: '#fff',
+              border: '1px solid #e8e8e8',
+              borderRadius: '16px',
+              padding: cardPadding,
+              boxShadow: '0 10px 24px rgba(17, 24, 39, 0.05)',
+              borderLeft: app.status === 'new' ? '5px solid #2d7a3a' : app.status === 'reviewed' ? '5px solid #5555cc' : '5px solid #d4d4d4',
+              overflow: 'hidden'
+            }}
+          >
+            <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: isMobile ? 'flex-start' : 'center', flexWrap: 'wrap' }}>
+                <div style={{ minWidth: 0 }}>
+                  <p style={{ fontWeight: 800, fontSize: isMobile ? '1rem' : '1.05rem', lineHeight: 1.3 }}>
+                    {[app.first_name, app.last_name].filter(Boolean).join(' ') || 'Unnamed Applicant'}
+                  </p>
+                  <p style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem', lineHeight: 1.45 }}>
+                    {app.email || 'No email'}{app.phone ? ` • ${app.phone}` : ''}
+                  </p>
+                </div>
+                <div style={{ textAlign: isMobile ? 'left' : 'right', width: isMobile ? '100%' : 'auto' }}>
+                  <p style={{ fontSize: '0.75rem', color: '#666' }}>{formatDate(app.created_at)}</p>
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      textTransform: 'capitalize',
+                      padding: '0.22rem 0.58rem',
+                      borderRadius: '999px',
+                      background: app.status === 'new' ? '#e6f4ea' : '#f0f0f0',
+                      color: app.status === 'new' ? '#2d7a3a' : '#555'
+                    }}
+                  >
+                    {app.status || 'unknown'}
+                  </span>
+                </div>
+              </div>
+            </summary>
+
+            <div style={{ marginTop: density === 'compact' ? '0.65rem' : '0.85rem', borderTop: '1px solid #f0f0f0', paddingTop: density === 'compact' ? '0.75rem' : '0.95rem', display: 'grid', gap: sectionGap }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {app.email && (
+                  <a href={`mailto:${app.email}`} style={{ fontSize: '0.8rem', color: '#333', background: '#f8f8f8', border: '1px solid #ececec', borderRadius: '999px', padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem', textDecoration: 'none', minHeight: '36px', display: 'inline-flex', alignItems: 'center' }}>
+                    Email
+                  </a>
+                )}
+                {app.phone && (
+                  <a href={`tel:${app.phone}`} style={{ fontSize: '0.8rem', color: '#333', background: '#f8f8f8', border: '1px solid #ececec', borderRadius: '999px', padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem', textDecoration: 'none', minHeight: '36px', display: 'inline-flex', alignItems: 'center' }}>
+                    Call
+                  </a>
+                )}
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: bodyColumns, gap: density === 'compact' ? '0.7rem' : '0.9rem', alignItems: 'start' }}>
+                <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
+                  {showAddress && (
+                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem' }}>Address</p>
+                      <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.5 }}>
+                        {[app.address_line1, app.address_line2, app.city, app.state, app.zip, app.country].filter(Boolean).join(', ') || 'Not provided'}
+                      </p>
+                    </section>
+                  )}
+
+                  {showPreferences && (
+                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Preferences</p>
+                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Gender</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.gender_preference || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Color</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.color_preference || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Registration</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.registration_type || 'Not provided'}</p>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </div>
+
+                <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
+                  {showHomeLifestyle && (
+                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Home & lifestyle</p>
+                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Home situation</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.home_situation || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Fence / containment</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.has_fence || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Indoor / outdoor</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.indoor_outdoor || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Vet info</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.vet_info || 'Not provided'}</p>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {showQuestions && (
+                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Questions</p>
+                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Training goals</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.training_goals || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>How they found us</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.how_found || 'Not provided'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Purchase agreement</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.purchase_agreement_questions || 'None'}</p>
+                        </div>
+                        <div>
+                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Other questions</p>
+                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.other_questions || 'None'}</p>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+                </div>
+              </div>
+            </div>
+          </details>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SettingsTab() {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
+  const [failures, setFailures] = useState([])
 
   async function handleResendAllApplications() {
     if (!confirm('Resend email notifications for all puppy applications?')) return
     setSending(true)
     setMessage('')
+    setFailures([])
     try {
       const result = await callFunction('resend-all-applications', {})
       const sent = result?.sent_count ?? 0
       const total = result?.total_applications ?? 0
       const failed = result?.failed_count ?? 0
+      setFailures(Array.isArray(result?.failures) ? result.failures : [])
       setMessage(`Done. Sent ${sent}/${total} notifications${failed ? ` (${failed} failed)` : ''}.`)
     } catch (err) {
       setMessage(`Error: ${err.message}`)
@@ -1282,6 +1702,33 @@ function SettingsTab() {
         >
           {sending ? 'Resending...' : 'Resend All Applications'}
         </button>
+
+        {failures.length > 0 && (
+          <div style={{ marginTop: '1rem', borderTop: '1px solid #f0d98a', paddingTop: '0.75rem' }}>
+            <p style={{ fontSize: '0.8rem', fontWeight: 600, color: '#7a4f00', marginBottom: '0.5rem' }}>
+              Failure details
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {failures.map((f, idx) => (
+                <pre
+                  key={`${f.application_id || 'unknown'}-${idx}`}
+                  style={{
+                    margin: 0,
+                    background: '#fff',
+                    border: '1px solid #f0d98a',
+                    borderRadius: '6px',
+                    padding: '0.6rem',
+                    fontSize: '0.75rem',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word'
+                  }}
+                >
+                  {f.error || 'Unknown error'}
+                </pre>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -1290,7 +1737,7 @@ function SettingsTab() {
 // ── ADMIN DASHBOARD SHELL ──
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'settings']
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'settings']
 
   return (
     <div>
@@ -1308,6 +1755,7 @@ function AdminDashboard() {
       {tab === 'litters' && <LittersTab />}
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
+      {tab === 'applications' && <ApplicationsTab />}
       {tab === 'settings' && <SettingsTab />}
     </div>
   )

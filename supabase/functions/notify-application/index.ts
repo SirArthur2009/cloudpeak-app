@@ -29,6 +29,7 @@ serve(async (req) => {
   try {
     const app = await req.json()
     const resendKey = Deno.env.get('RESEND_API_KEY')
+    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <onboarding@resend.dev>'
 
     if (!resendKey) {
       return new Response(JSON.stringify({ error: 'Missing RESEND_API_KEY' }), { status: 500 })
@@ -117,7 +118,7 @@ serve(async (req) => {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          from: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+          from: fromEmail,
           to: email,
           subject: `New puppy application — ${app.first_name} ${app.last_name}`,
           html
@@ -126,12 +127,25 @@ serve(async (req) => {
 
       const resendBodyText = await resendRes.text()
       if (!resendRes.ok) {
-        throw new Error(`Resend failed for ${email}: ${resendRes.status} ${resendBodyText}`)
+        return {
+          email,
+          ok: false,
+          status: resendRes.status,
+          error: resendBodyText,
+        }
       }
-      return { email, status: resendRes.status }
+      return { email, ok: true, status: resendRes.status }
     }))
 
-    return new Response(JSON.stringify({ ok: true, sent_to: adminEmails, send_results: sendResults }), {
+    const sentTo = sendResults.filter((r) => r.ok).map((r) => r.email)
+    const failedTo = sendResults.filter((r) => !r.ok)
+
+    if (sentTo.length === 0) {
+      const firstFailure = failedTo[0]
+      throw new Error(`No emails sent. ${firstFailure?.email || 'unknown'} failed: ${firstFailure?.status || ''} ${firstFailure?.error || ''}`)
+    }
+
+    return new Response(JSON.stringify({ ok: true, sent_to: sentTo, failed_to: failedTo, send_results: sendResults }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (err) {
