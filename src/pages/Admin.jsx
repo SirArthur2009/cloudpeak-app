@@ -1241,6 +1241,10 @@ function ApplicationsTab() {
   const [applications, setApplications] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+  const [statusSavingId, setStatusSavingId] = useState(null)
+  const [addingToWaitlistId, setAddingToWaitlistId] = useState(null)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [controlsOpen, setControlsOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -1265,6 +1269,7 @@ function ApplicationsTab() {
   async function fetchApplications() {
     setLoading(true)
     setError('')
+    setSuccess('')
     const { data, error: fetchError } = await supabase
       .from('applications')
       .select('*')
@@ -1279,6 +1284,137 @@ function ApplicationsTab() {
 
     setApplications(data || [])
     setLoading(false)
+  }
+
+  function generateTemporaryPassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
+    let out = ''
+    for (let i = 0; i < 12; i += 1) {
+      out += alphabet[Math.floor(Math.random() * alphabet.length)]
+    }
+    return out
+  }
+
+  async function handleAddToWaitlist(app) {
+    setError('')
+    setSuccess('')
+
+    const email = (app.email || '').trim().toLowerCase()
+    if (!email) {
+      setError('Cannot add to waitlist: application has no email.')
+      return
+    }
+
+    const fullName = [app.first_name, app.last_name].filter(Boolean).join(' ').trim() || 'New Client'
+    const phone = app.phone || ''
+    const tempPassword = generateTemporaryPassword()
+
+    setAddingToWaitlistId(app.id)
+
+    try {
+      const { data: existingWaitlist } = await supabase
+        .from('waitlist')
+        .select('id')
+        .ilike('email', email)
+        .order('position', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!existingWaitlist?.id) {
+        const { data: highestPositionRow } = await supabase
+          .from('waitlist')
+          .select('position')
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        const nextPosition = Number(highestPositionRow?.position || 0) + 1
+        const { error: insertError } = await supabase
+          .from('waitlist')
+          .insert({
+            name: fullName,
+            email,
+            phone,
+            position: nextPosition,
+            notes: `Added from application ${app.id}`
+          })
+
+        if (insertError) {
+          throw new Error(insertError.message || 'Failed to insert waitlist row')
+        }
+      }
+
+      await callFunction('create-client-user', {
+        email,
+        password: tempPassword,
+        name: fullName
+      })
+
+      await callFunction('send-client-portal-credentials', {
+        clientName: fullName,
+        clientEmail: email,
+        password: tempPassword,
+        portalUrl: PORTAL_URL
+      })
+
+      const { error: statusError } = await supabase
+        .from('applications')
+        .update({ status: 'reviewed' })
+        .eq('id', app.id)
+
+      if (statusError) {
+        throw new Error(statusError.message || 'Waitlist added, but failed to update application status.')
+      }
+
+      setApplications(prev => prev.map(item => (
+        item.id === app.id ? { ...item, status: 'reviewed' } : item
+      )))
+
+      setSuccess(`Added ${fullName} to waitlist and sent portal credentials.`)
+    } catch (err) {
+      setError(err?.message || 'Unable to add to waitlist')
+    }
+
+    setAddingToWaitlistId(null)
+  }
+
+  async function handleDeleteApplication(app) {
+    const applicantName = [app.first_name, app.last_name].filter(Boolean).join(' ') || 'this application'
+    if (!confirm(`Delete ${applicantName}? This cannot be undone.`)) return
+
+    setDeletingId(app.id)
+    const { error: deleteError } = await supabase
+      .from('applications')
+      .delete()
+      .eq('id', app.id)
+
+    if (deleteError) {
+      setError(deleteError.message || 'Unable to delete application')
+      setDeletingId(null)
+      return
+    }
+
+    setApplications(prev => prev.filter(item => item.id !== app.id))
+    setDeletingId(null)
+  }
+
+  async function handleSetApplicationStatus(app, nextStatus) {
+    setStatusSavingId(app.id)
+    const { error: updateError } = await supabase
+      .from('applications')
+      .update({ status: nextStatus })
+      .eq('id', app.id)
+
+    if (updateError) {
+      setError(updateError.message || 'Unable to update application status')
+      setStatusSavingId(null)
+      return
+    }
+
+    setApplications(prev => prev.map(item => (
+      item.id === app.id ? { ...item, status: nextStatus } : item
+    )))
+    setStatusSavingId(null)
   }
 
   function formatDate(value) {
@@ -1503,6 +1639,7 @@ function ApplicationsTab() {
       </div>
 
       {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+      {success && <p style={{ color: '#1f7a35', marginBottom: '1rem' }}>{success}</p>}
 
       {!error && filteredApplications.length === 0 && (
         <p style={{ color: '#888' }}>No applications found yet.</p>
@@ -1562,6 +1699,73 @@ function ApplicationsTab() {
                     Call
                   </a>
                 )}
+                {(app.status || '').toLowerCase() === 'archived' ? (
+                  <button
+                    onClick={() => handleSetApplicationStatus(app, 'new')}
+                    disabled={statusSavingId === app.id}
+                    style={{
+                      ...btnStyle,
+                      fontSize: '0.8rem',
+                      color: '#1f4f9b',
+                      background: '#eef4ff',
+                      border: '1px solid #c9dcff',
+                      borderRadius: '999px',
+                      padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
+                      minHeight: '36px'
+                    }}
+                  >
+                    {statusSavingId === app.id ? 'Saving...' : 'Mark New'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleSetApplicationStatus(app, 'archived')}
+                    disabled={statusSavingId === app.id}
+                    style={{
+                      ...btnStyle,
+                      fontSize: '0.8rem',
+                      color: '#6b5a19',
+                      background: '#fff8e6',
+                      border: '1px solid #f0dd9c',
+                      borderRadius: '999px',
+                      padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
+                      minHeight: '36px'
+                    }}
+                  >
+                    {statusSavingId === app.id ? 'Saving...' : 'Archive'}
+                  </button>
+                )}
+                <button
+                  onClick={() => handleAddToWaitlist(app)}
+                  disabled={addingToWaitlistId === app.id}
+                  style={{
+                    ...btnStyle,
+                    fontSize: '0.8rem',
+                    color: '#084298',
+                    background: '#e7f1ff',
+                    border: '1px solid #b8d3ff',
+                    borderRadius: '999px',
+                    padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
+                    minHeight: '36px'
+                  }}
+                >
+                  {addingToWaitlistId === app.id ? 'Adding...' : 'Add to Waitlist'}
+                </button>
+                <button
+                  onClick={() => handleDeleteApplication(app)}
+                  disabled={deletingId === app.id}
+                  style={{
+                    ...btnStyle,
+                    fontSize: '0.8rem',
+                    color: '#b42318',
+                    background: '#fff1f1',
+                    border: '1px solid #f3c7c7',
+                    borderRadius: '999px',
+                    padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
+                    minHeight: '36px'
+                  }}
+                >
+                  {deletingId === app.id ? 'Deleting...' : 'Delete'}
+                </button>
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: bodyColumns, gap: density === 'compact' ? '0.7rem' : '0.9rem', alignItems: 'start' }}>

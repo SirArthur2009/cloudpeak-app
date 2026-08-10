@@ -30,6 +30,33 @@ export default function Waitlist() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
+  async function archiveLatestApplicationForEmail(email) {
+    if (!email) return
+
+    const normalized = email.trim().toLowerCase()
+    const { data: latestApplication, error: fetchError } = await supabase
+      .from('applications')
+      .select('id, status, created_at')
+      .ilike('email', normalized)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    if (fetchError || !latestApplication?.id) {
+      if (fetchError) console.warn('Could not fetch latest application to archive:', fetchError.message)
+      return
+    }
+
+    const { error: archiveError } = await supabase
+      .from('applications')
+      .update({ status: 'archived' })
+      .eq('id', latestApplication.id)
+
+    if (archiveError) {
+      console.warn('Could not archive application:', archiveError.message)
+    }
+  }
+
   useEffect(() => {
     async function fetchAll() {
       const { data: { session } } = await supabase.auth.getSession()
@@ -83,6 +110,9 @@ export default function Waitlist() {
       setSaving(false)
       return
     }
+
+    // Best-effort: archive the applicant's latest application once they pick a puppy.
+    await archiveLatestApplicationForEmail(activePerson.email)
 
     try {
       await callFunction('send-reservation-email', {
