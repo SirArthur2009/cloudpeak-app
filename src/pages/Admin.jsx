@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
-const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
 const PORTAL_URL = import.meta.env.VITE_PORTAL_URL
 
 const inputStyle = {
@@ -17,11 +17,19 @@ const btnStyle = {
 }
 
 async function callFunction(name, body) {
-  const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
+  const baseUrl = (FUNCTIONS_URL || `${SUPABASE_URL}/functions/v1`).replace(/\/$/, '')
+  const { data: sessionData } = await supabase.auth.getSession()
+  const accessToken = sessionData?.session?.access_token
+
+  if (!accessToken) {
+    throw new Error('Not authenticated. Please sign in again.')
+  }
+
+  const res = await fetch(`${baseUrl}/${name}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`
+      'Authorization': `Bearer ${accessToken}`
     },
     body: JSON.stringify(body)
   })
