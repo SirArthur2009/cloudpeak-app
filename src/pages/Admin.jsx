@@ -25,7 +25,11 @@ async function callFunction(name, body) {
     },
     body: JSON.stringify(body)
   })
-  return res.json()
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data?.error || `Function ${name} failed with status ${res.status}`)
+  }
+  return data
 }
 // ── Upload a single file to Supabase storage ──
 async function uploadFile(bucket, file) {
@@ -1225,10 +1229,60 @@ function WaitlistTab() {
   )
 }
 
+function SettingsTab() {
+  const [sending, setSending] = useState(false)
+  const [message, setMessage] = useState('')
+
+  async function handleResendAllApplications() {
+    if (!confirm('Resend email notifications for all puppy applications?')) return
+    setSending(true)
+    setMessage('')
+    try {
+      const result = await callFunction('resend-all-applications', {})
+      const sent = result?.sent_count ?? 0
+      const total = result?.total_applications ?? 0
+      const failed = result?.failed_count ?? 0
+      setMessage(`Done. Sent ${sent}/${total} notifications${failed ? ` (${failed} failed)` : ''}.`)
+    } catch (err) {
+      setMessage(`Error: ${err.message}`)
+    }
+    setSending(false)
+  }
+
+  return (
+    <div>
+      <h3 style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Settings</h3>
+      <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
+        Admin maintenance tools.
+      </p>
+
+      {message && (
+        <p style={{ color: message.startsWith('Error:') ? 'red' : '#2d7a3a', marginBottom: '1rem' }}>
+          {message}
+        </p>
+      )}
+
+      <div style={{ background: '#fff8e5', border: '1px solid #ffe08a', borderRadius: '10px', padding: '1rem' }}>
+        <p style={{ fontWeight: 600, marginBottom: '0.35rem' }}>Resend application emails</p>
+        <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.85rem' }}>
+          Sends the puppy application notification email again for every application currently in the database.
+        </p>
+        <button
+          onClick={handleResendAllApplications}
+          disabled={sending}
+          style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.65rem 1rem' }}
+        >
+          {sending ? 'Resending...' : 'Resend All Applications'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 // ── ADMIN DASHBOARD SHELL ──
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist']
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'settings']
 
   return (
     <div>
@@ -1246,6 +1300,7 @@ function AdminDashboard() {
       {tab === 'litters' && <LittersTab />}
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
+      {tab === 'settings' && <SettingsTab />}
     </div>
   )
 }
