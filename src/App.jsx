@@ -7,7 +7,7 @@ import Waitlist from './pages/Waitlist'
 import Pedigrees from './pages/Pedigrees'
 import Admin from './pages/Admin'
 import Login from './pages/Login'
-import Analytics from './pages/Analytics'
+import ForcePasswordChange from './pages/ForcePasswordChange'
 import './index.css'
 
 function useIsMobile() {
@@ -21,12 +21,60 @@ function useIsMobile() {
 }
 
 function App() {
-  const { session, role, loading } = useAuth()
+  const { session, role, loading, mustChangePassword } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [passwordChangeError, setPasswordChangeError] = useState('')
+  const [passwordChangeSuccess, setPasswordChangeSuccess] = useState('')
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false)
   const isMobile = useIsMobile()
 
+  async function handlePasswordChange(newPassword) {
+    if (!session?.user?.id) return
+
+    setPasswordChangeError('')
+    setPasswordChangeSuccess('')
+    setPasswordChangeLoading(true)
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword })
+
+    if (error) {
+      setPasswordChangeError(error.message)
+      setPasswordChangeLoading(false)
+      return
+    }
+
+    const { error: profileError } = await supabase.auth.updateUser({
+      data: { must_change_password: false }
+    })
+
+    if (profileError) {
+      setPasswordChangeError(profileError.message)
+      setPasswordChangeLoading(false)
+      return
+    }
+
+    setPasswordChangeSuccess('Password updated successfully. You can continue to the portal.')
+    setPasswordChangeLoading(false)
+    setPasswordChangeError('')
+    setTimeout(() => {
+      setPasswordChangeSuccess('')
+      window.location.reload()
+    }, 800)
+  }
+
   if (loading) return <p style={{ padding: '2rem', color: '#888' }}>Loading...</p>
-  if (!session) return <Login />
+  if (!session) return <Login onPasswordChangeRequired={() => {}} />
+
+  if (mustChangePassword) {
+    return (
+      <ForcePasswordChange
+        onSubmit={handlePasswordChange}
+        loading={passwordChangeLoading}
+        error={passwordChangeError}
+        success={passwordChangeSuccess}
+      />
+    )
+  }
 
   const activeLinkStyle = ({ isActive }) => ({
     fontWeight: isActive ? 600 : 400,
@@ -69,7 +117,6 @@ function App() {
               <NavLink to="/" style={activeLinkStyle}>Available Puppies</NavLink>
               <NavLink to="/pedigrees" style={activeLinkStyle}>Pedigrees</NavLink>
               <NavLink to="/waitlist" style={activeLinkStyle}>Waitlist</NavLink>
-              <NavLink to="/analytics" style={activeLinkStyle}>Analytics</NavLink>
               {role === 'admin' && (
                 <NavLink to="/admin" style={({ isActive }) => ({ ...activeLinkStyle({ isActive }), color: isActive ? '#1a1a1a' : '#888' })}>Admin</NavLink>
               )}
@@ -111,7 +158,6 @@ function App() {
             <NavLink to="/" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Available Puppies</NavLink>
             <NavLink to="/pedigrees" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Pedigrees</NavLink>
             <NavLink to="/waitlist" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Waitlist</NavLink>
-            <NavLink to="/analytics" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Analytics</NavLink>
             {role === 'admin' && (
               <NavLink to="/admin" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Admin</NavLink>
             )}
@@ -135,7 +181,6 @@ function App() {
           <Route path="/" element={<Puppies />} />
           <Route path="/pedigrees" element={<Pedigrees />} />
           <Route path="/waitlist" element={<Waitlist />} />
-          <Route path="/analytics" element={<Analytics />} />
           <Route path="/admin" element={role === 'admin' ? <Admin /> : <Navigate to="/" />} />
         </Routes>
       </main>

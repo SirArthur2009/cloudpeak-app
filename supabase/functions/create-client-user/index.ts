@@ -31,7 +31,10 @@ serve(async (req) => {
     const { data, error } = await supabase.auth.admin.createUser({
       email: normalizedEmail,
       password,
-      email_confirm: true
+      email_confirm: true,
+      user_metadata: {
+        must_change_password: true
+      }
     })
 
     let userId = data?.user?.id
@@ -66,7 +69,10 @@ serve(async (req) => {
 
       const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
         password,
-        email_confirm: true
+        email_confirm: true,
+        user_metadata: {
+          must_change_password: true
+        }
       })
 
       if (updateError) {

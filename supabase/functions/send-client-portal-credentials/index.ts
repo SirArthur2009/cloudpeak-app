@@ -37,8 +37,9 @@ serve(async (req) => {
           <p>You have been added to the Cloud Peak waitlist portal.</p>
           <p><strong>Login email:</strong> ${clientEmail}</p>
           <p><strong>Temporary password:</strong> ${password}</p>
+          <p>When you sign in for the first time, you will be asked to choose a new password before continuing.</p>
           <p><a href="${loginUrl}" style="display:inline-block;padding:10px 20px;background:#1a1a1a;color:#fff;border-radius:6px;text-decoration:none;">Open Portal</a></p>
-          <p>After signing in, please keep your login details secure.</p>
+          <p>Please keep your login details secure.</p>
         `
       })
     })
