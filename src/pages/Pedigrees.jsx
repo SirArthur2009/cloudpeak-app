@@ -1,5 +1,61 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+
+function getDogPhotoUrl(photoUrl) {
+  if (!photoUrl) return ''
+  const trimmed = String(photoUrl).trim()
+  if (!trimmed) return ''
+
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('blob:')
+  ) {
+    return trimmed
+  }
+
+  // Support legacy records that may store only a storage path.
+  const normalizedPath = trimmed
+    .replace(/^\/+/, '')
+    .replace(/^dog-photos\//, '')
+    .replace(/^storage\/v1\/object\/public\/dog-photos\//, '')
+
+  const { data } = supabase.storage.from('dog-photos').getPublicUrl(normalizedPath)
+  return data?.publicUrl || ''
+}
+
+function DogPhoto({ name, photoUrl, style, placeholderStyle }) {
+  const [failed, setFailed] = useState(false)
+  const resolvedUrl = useMemo(() => getDogPhotoUrl(photoUrl), [photoUrl])
+
+  if (!resolvedUrl || failed) {
+    return (
+      <div
+        style={{
+          background: '#f0f0f0',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          color: '#aaa',
+          ...placeholderStyle
+        }}
+      >
+        No photo
+      </div>
+    )
+  }
+
+  return (
+    <img
+      src={resolvedUrl}
+      alt={name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      style={style}
+    />
+  )
+}
 
 export default function Pedigrees() {
   const [dogs, setDogs] = useState([])
@@ -63,10 +119,12 @@ export default function Pedigrees() {
             onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(0,0,0,0.08)'}
             onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
           >
-            {dog.photo_url
-              ? <img src={dog.photo_url} alt={dog.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
-              : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
-            }
+            <DogPhoto
+              name={dog.name}
+              photoUrl={dog.photo_url}
+              style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }}
+              placeholderStyle={{ width: '100%', aspectRatio: '1' }}
+            />
             <div style={{ padding: '1rem' }}>
               <p style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem' }}>{dog.name}</p>
               {dog.registration_number && (
@@ -108,9 +166,12 @@ export default function Pedigrees() {
               maxHeight: '90vh', overflowY: 'auto'
             }}
           >
-            {selected.photo_url && (
-              <img src={selected.photo_url} alt={selected.name} style={{ width: '100%', height: '240px', objectFit: 'cover' }} />
-            )}
+            <DogPhoto
+              name={selected.name}
+              photoUrl={selected.photo_url}
+              style={{ width: '100%', height: '240px', objectFit: 'cover' }}
+              placeholderStyle={{ width: '100%', height: '240px' }}
+            />
             <div style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
                 <h3 style={{ fontWeight: 600, fontSize: '1.2rem' }}>{selected.name}</h3>

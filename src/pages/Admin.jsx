@@ -1050,19 +1050,40 @@ function WaitlistTab() {
 
   useEffect(() => { fetchAll() }, [])
 
-  async function fetchAll() {
-    const [{ data: waitlistData }, { data: littersData }] = await Promise.all([
+  async function fetchAll(forLitterId = selectedLitterId) {
+    const [{ data: waitlistData }, { data: littersData }, { data: puppiesData }] = await Promise.all([
       supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
-      supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+      supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
+      supabase.from('puppies').select('litter_id, status')
     ])
     const litterList = littersData || []
-    setLitters(litterList)
+    const puppyStatsByLitter = new Map()
 
-    if (!selectedLitterId && litterList.length > 0) {
-      setSelectedLitterId(String(litterList[0].id))
+    for (const puppy of puppiesData || []) {
+      const litterId = String(puppy.litter_id || '')
+      if (!litterId) continue
+      const current = puppyStatsByLitter.get(litterId) || { total: 0, available: 0 }
+      current.total += 1
+      if (puppy.status === 'available') current.available += 1
+      puppyStatsByLitter.set(litterId, current)
     }
 
-    const currentLitterId = forLitterId || (litterList[0] ? String(litterList[0].id) : '')
+    const eligibleLitters = litterList.filter((litter) => {
+      const stats = puppyStatsByLitter.get(String(litter.id))
+      return !stats || stats.total === 0 || stats.available > 0
+    })
+
+    setLitters(eligibleLitters)
+
+    const eligibleLitterIds = new Set(eligibleLitters.map(litter => String(litter.id)))
+    const currentLitterId = eligibleLitterIds.has(String(forLitterId || ''))
+      ? String(forLitterId)
+      : (eligibleLitters[0] ? String(eligibleLitters[0].id) : '')
+
+    if (currentLitterId !== selectedLitterId) {
+      setSelectedLitterId(currentLitterId)
+    }
+
     const listForLitter = (waitlistData || []).filter(w => String(w.litter_id || '') === currentLitterId)
     const list = listForLitter.sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
     setWaitlist(list)
@@ -1366,12 +1387,30 @@ function ApplicationsTab() {
   }
 
   async function fetchLitters() {
-    const { data } = await supabase
-      .from('litters')
-      .select('id, name')
-      .order('created_at', { ascending: false })
+    const [{ data: littersData }, { data: puppiesData }] = await Promise.all([
+      supabase
+        .from('litters')
+        .select('id, name')
+        .order('created_at', { ascending: false }),
+      supabase.from('puppies').select('litter_id, status')
+    ])
 
-    const list = data || []
+    const puppyStatsByLitter = new Map()
+
+    for (const puppy of puppiesData || []) {
+      const litterId = String(puppy.litter_id || '')
+      if (!litterId) continue
+      const current = puppyStatsByLitter.get(litterId) || { total: 0, available: 0 }
+      current.total += 1
+      if (puppy.status === 'available') current.available += 1
+      puppyStatsByLitter.set(litterId, current)
+    }
+
+    const list = (littersData || []).filter((litter) => {
+      const stats = puppyStatsByLitter.get(String(litter.id))
+      return !stats || stats.total === 0 || stats.available > 0
+    })
+
     setLitters(list)
   }
 

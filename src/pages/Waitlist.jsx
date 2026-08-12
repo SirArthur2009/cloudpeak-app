@@ -70,19 +70,40 @@ export default function Waitlist() {
         .single()
       setIsAdmin(profile?.role === 'admin')
 
-      const [{ data: w }, { data: p }, { data: l }] = await Promise.all([
+      const [{ data: w }, { data: p }, { data: l }, { data: allPuppies }] = await Promise.all([
         supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
         supabase.from('puppies').select('*, litters(name)').eq('status', 'available').order('id'),
-        supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+        supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
+        supabase.from('puppies').select('litter_id, status')
       ])
 
       setWaitlist(w || [])
       setPuppies(p || [])
       const litterList = l || []
-      setLitters(litterList)
+      const puppyStatsByLitter = new Map()
+
+      for (const puppy of allPuppies || []) {
+        const litterId = String(puppy.litter_id || '')
+        if (!litterId) continue
+        const current = puppyStatsByLitter.get(litterId) || { total: 0, available: 0 }
+        current.total += 1
+        if (puppy.status === 'available') current.available += 1
+        puppyStatsByLitter.set(litterId, current)
+      }
+
+      const eligibleLitters = litterList.filter((litter) => {
+        const stats = puppyStatsByLitter.get(String(litter.id))
+        return !stats || stats.total === 0 || stats.available > 0
+      })
+
+      setLitters(eligibleLitters)
+      const eligibleLitterIds = new Set(eligibleLitters.map(litter => String(litter.id)))
 
       const myEntries = (w || []).filter(person => person.email?.toLowerCase() === currentUserEmail)
-      const defaultLitterId = myEntries[0]?.litter_id || litterList[0]?.id
+      const preferredLitterId = myEntries[0]?.litter_id
+      const defaultLitterId = eligibleLitterIds.has(String(preferredLitterId || ''))
+        ? preferredLitterId
+        : eligibleLitters[0]?.id
       if (defaultLitterId) setSelectedLitterId(String(defaultLitterId))
 
       setLoading(false)
