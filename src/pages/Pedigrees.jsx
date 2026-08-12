@@ -169,8 +169,8 @@ export default function Pedigrees() {
             <DogPhoto
               name={selected.name}
               photoUrl={selected.photo_url}
-              style={{ width: '100%', height: '240px', objectFit: 'cover' }}
-              placeholderStyle={{ width: '100%', height: '240px' }}
+              style={{ width: '100%', maxHeight: '60vh', objectFit: 'contain', background: '#f7f7f7' }}
+              placeholderStyle={{ width: '100%', minHeight: '240px' }}
             />
             <div style={{ padding: '1.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.75rem' }}>
