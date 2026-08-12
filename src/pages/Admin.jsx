@@ -559,7 +559,7 @@ function PuppiesTab() {
 
   useEffect(() => { fetchAll() }, [])
 
-  async function fetchAll() {
+  async function fetchAll(forLitterId = selectedLitterId) {
     const [{ data: p }, { data: l }, { data: r }] = await Promise.all([
       supabase.from('puppies').select('*, litters(name)').order('id'),
       supabase.from('litters').select('*').order('id'),
@@ -1036,9 +1036,11 @@ function DogsTab() {
 
 function WaitlistTab() {
   const [waitlist, setWaitlist] = useState([])
+  const [litters, setLitters] = useState([])
+  const [selectedLitterId, setSelectedLitterId] = useState('')
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', notes: '', password: '' })
+  const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', notes: '', password: '', litter_id: '' })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [activePerson, setActivePerson] = useState(null)
@@ -1049,8 +1051,20 @@ function WaitlistTab() {
   useEffect(() => { fetchAll() }, [])
 
   async function fetchAll() {
-    const { data } = await supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position')
-    const list = data || []
+    const [{ data: waitlistData }, { data: littersData }] = await Promise.all([
+      supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
+      supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+    ])
+    const litterList = littersData || []
+    setLitters(litterList)
+
+    if (!selectedLitterId && litterList.length > 0) {
+      setSelectedLitterId(String(litterList[0].id))
+    }
+
+    const currentLitterId = forLitterId || (litterList[0] ? String(litterList[0].id) : '')
+    const listForLitter = (waitlistData || []).filter(w => String(w.litter_id || '') === currentLitterId)
+    const list = listForLitter.sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
     setWaitlist(list)
     const active = list.find(w => w.is_active && !w.pending_approval) || null
     const pending = list.find(w => w.pending_approval) || null
@@ -1063,31 +1077,78 @@ function WaitlistTab() {
     setLoading(false)
   }
 
+  useEffect(() => {
+    if (!selectedLitterId) return
+    fetchAll()
+  }, [selectedLitterId])
+
   function startNew() {
+    if (!selectedLitterId) {
+      setMessage('Choose a litter first.')
+      return
+    }
     setEditing('new')
-    setForm({ name: '', email: '', phone: '', position: waitlist.length + 1, notes: '', password: '' })
+    setForm({ name: '', email: '', phone: '', position: waitlist.length + 1, notes: '', password: '', litter_id: selectedLitterId })
   }
 
   function startEdit(person) {
     setEditing(person.id)
-    setForm({ name: person.name || '', email: person.email || '', phone: person.phone || '', position: person.position || '', notes: person.notes || '', password: '' })
+    setForm({ name: person.name || '', email: person.email || '', phone: person.phone || '', position: person.position || '', notes: person.notes || '', password: '', litter_id: String(person.litter_id || selectedLitterId || '') })
   }
 
   async function handleSave() {
     setSaving(true)
     setMessage('')
+    if (!form.litter_id) { setMessage('Please select a litter.'); setSaving(false); return }
+
     if (editing === 'new') {
       if (!form.email || !form.password) { setMessage('Email and password are required for new entries.'); setSaving(false); return }
       const { error: authError } = await supabase.auth.admin
         ? { error: null }
         : { error: null }
-      const { error } = await supabase.from('waitlist').insert({ name: form.name, email: form.email, phone: form.phone, position: Number(form.position), notes: form.notes })
+      const { data: highestPositionRow } = await supabase
+        .from('waitlist')
+        .select('position')
+        .eq('litter_id', form.litter_id)
+        .order('position', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const defaultPosition = Number(highestPositionRow?.position || 0) + 1
+      const position = Number(form.position || defaultPosition)
+
+      const { error } = await supabase.from('waitlist').insert({
+        name: form.name,
+        email: form.email,
+        phone: form.phone,
+        position,
+        notes: form.notes,
+        litter_id: form.litter_id
+      })
       if (error) setMessage('Error: ' + error.message)
-      else { setMessage('Added!'); setEditing(null); fetchAll() }
+      else {
+        const nextLitterId = String(form.litter_id)
+        setMessage('Added!')
+        setEditing(null)
+        setSelectedLitterId(nextLitterId)
+        fetchAll(nextLitterId)
+      }
     } else {
-      const { error } = await supabase.from('waitlist').update({ name: form.name, email: form.email, phone: form.phone, position: Number(form.position), notes: form.notes }).eq('id', editing)
+      const { error } = await supabase.from('waitlist').update({
+        name: form.name,
+        email: form.email,
+        phone: form.phone,
+        position: Number(form.position),
+        notes: form.notes,
+        litter_id: form.litter_id
+      }).eq('id', editing)
       if (error) setMessage('Error: ' + error.message)
-      else { setMessage('Saved!'); setEditing(null); fetchAll() }
+      else {
+        const nextLitterId = String(form.litter_id)
+        setMessage('Saved!')
+        setEditing(null)
+        setSelectedLitterId(nextLitterId)
+        fetchAll(nextLitterId)
+      }
     }
     setSaving(false)
   }
@@ -1181,13 +1242,28 @@ function WaitlistTab() {
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h3 style={{ fontWeight: 600 }}>Waitlist</h3>
-        <button onClick={startNew} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>+ Add Person</button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <select style={{ ...inputStyle, minWidth: '200px' }} value={selectedLitterId} onChange={e => setSelectedLitterId(e.target.value)}>
+            <option value="">Select litter</option>
+            {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+          <button onClick={startNew} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>+ Add Person</button>
+        </div>
       </div>
+
+      {!selectedLitterId && <p style={{ color: '#888', marginBottom: '1rem' }}>Select a litter to view and manage its waitlist.</p>}
 
       {editing && (
         <div style={{ background: '#f5f5f3', border: '1px solid #e0e0e0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
           <h4 style={{ marginBottom: '1rem', fontWeight: 600 }}>{editing === 'new' ? 'Add to Waitlist' : 'Edit Entry'}</h4>
           <FormGrid>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: '#666' }}>Litter</label>
+              <select style={inputStyle} value={form.litter_id} onChange={e => setForm({ ...form, litter_id: e.target.value })}>
+                <option value="">Select litter</option>
+                {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Name</label><input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Email</label><input type="email" style={inputStyle} value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Phone</label><input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
@@ -1239,6 +1315,8 @@ function WaitlistTab() {
 
 function ApplicationsTab() {
   const [applications, setApplications] = useState([])
+  const [litters, setLitters] = useState([])
+  const [selectedLitterByApp, setSelectedLitterByApp] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -1258,6 +1336,7 @@ function ApplicationsTab() {
 
   useEffect(() => {
     fetchApplications()
+    fetchLitters()
   }, [])
 
   useEffect(() => {
@@ -1286,6 +1365,16 @@ function ApplicationsTab() {
     setLoading(false)
   }
 
+  async function fetchLitters() {
+    const { data } = await supabase
+      .from('litters')
+      .select('id, name')
+      .order('created_at', { ascending: false })
+
+    const list = data || []
+    setLitters(list)
+  }
+
   function generateTemporaryPassword() {
     const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
     let out = ''
@@ -1295,9 +1384,14 @@ function ApplicationsTab() {
     return out
   }
 
-  async function handleAddToWaitlist(app) {
+  async function handleAddToWaitlist(app, litterId) {
     setError('')
     setSuccess('')
+
+    if (!litterId) {
+      setError('Choose a litter before adding this application to the waitlist.')
+      return
+    }
 
     const email = (app.email || '').trim().toLowerCase()
     if (!email) {
@@ -1316,6 +1410,7 @@ function ApplicationsTab() {
         .from('waitlist')
         .select('id')
         .ilike('email', email)
+        .eq('litter_id', litterId)
         .order('position', { ascending: false })
         .limit(1)
         .maybeSingle()
@@ -1324,6 +1419,7 @@ function ApplicationsTab() {
         const { data: highestPositionRow } = await supabase
           .from('waitlist')
           .select('position')
+          .eq('litter_id', litterId)
           .order('position', { ascending: false })
           .limit(1)
           .maybeSingle()
@@ -1336,6 +1432,7 @@ function ApplicationsTab() {
             email,
             phone,
             position: nextPosition,
+            litter_id: litterId,
             notes: `Added from application ${app.id}`
           })
 
@@ -1370,7 +1467,9 @@ function ApplicationsTab() {
         item.id === app.id ? { ...item, status: 'reviewed' } : item
       )))
 
-      setSuccess(`Added ${fullName} to waitlist and sent portal credentials.`)
+      const selectedLitter = litters.find(l => String(l.id) === String(litterId))
+      const litterName = selectedLitter?.name || 'selected litter'
+      setSuccess(`Added ${fullName} to the ${litterName} waitlist and sent portal credentials.`)
     } catch (err) {
       setError(err?.message || 'Unable to add to waitlist')
     }
@@ -1735,8 +1834,8 @@ function ApplicationsTab() {
                   </button>
                 )}
                 <button
-                  onClick={() => handleAddToWaitlist(app)}
-                  disabled={addingToWaitlistId === app.id}
+                  onClick={() => handleAddToWaitlist(app, selectedLitterByApp[app.id])}
+                  disabled={addingToWaitlistId === app.id || !selectedLitterByApp[app.id]}
                   style={{
                     ...btnStyle,
                     fontSize: '0.8rem',
@@ -1750,6 +1849,14 @@ function ApplicationsTab() {
                 >
                   {addingToWaitlistId === app.id ? 'Adding...' : 'Add to Waitlist'}
                 </button>
+                <select
+                  value={selectedLitterByApp[app.id] || ''}
+                  onChange={(e) => setSelectedLitterByApp(prev => ({ ...prev, [app.id]: e.target.value }))}
+                  style={{ ...inputStyle, fontSize: '0.8rem', maxWidth: isMobile ? '100%' : '220px' }}
+                >
+                  <option value="">Select litter for waitlist</option>
+                  {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
                 <button
                   onClick={() => handleDeleteApplication(app)}
                   disabled={deletingId === app.id}

@@ -31,15 +31,31 @@ serve(async (req) => {
       body: JSON.stringify({
         from: fromEmail,
         to: clientEmail,
-        subject: 'Your Cloud Peak waitlist portal login',
+        subject: 'Welcome to your Cloud Peak portal',
         html: `
           <h2>Hi ${safeName},</h2>
-          <p>You have been added to the Cloud Peak waitlist portal.</p>
+          <p>Welcome to the Cloud Peak Silver Labradors client portal.</p>
+          <p>You have been added to the waitlist portal and can now log in to view available puppies, track your place in line, and review pedigree information.</p>
+
           <p><strong>Login email:</strong> ${clientEmail}</p>
           <p><strong>Temporary password:</strong> ${password}</p>
           <p>When you sign in for the first time, you will be asked to choose a new password before continuing.</p>
           <p><a href="${loginUrl}" style="display:inline-block;padding:10px 20px;background:#1a1a1a;color:#fff;border-radius:6px;text-decoration:none;">Open Portal</a></p>
-          <p>Please keep your login details secure.</p>
+
+          <h3>How to use the portal</h3>
+          <ul>
+            <li><strong>Available Puppies:</strong> Browse current and upcoming puppies and filter by litter or status.</li>
+            <li><strong>Waitlist:</strong> View your litter and see where your family sits in the lineup.</li>
+            <li><strong>Pedigrees:</strong> Search for dogs and review pedigree, Embark, and OFA information when available.</li>
+          </ul>
+
+          <h3>How the puppy selection process works</h3>
+          <p>Once the waitlist is active, families are placed in order based on their position. When it is your turn, you will receive a notification and you will be able to log in and choose from the available puppies in your litter.</p>
+          <p>If another family is currently choosing, you will see that message in the portal and can check back later. When it is your turn, you can select a puppy and submit your request.</p>
+          <p>After you choose a puppy, the request is reviewed before final approval. Once approved, that puppy is reserved for your family.</p>
+
+          <p>Please keep your login details secure and make sure to check the portal regularly for updates.</p>
+          <p>If you have any questions, simply reply to this email and we’ll be happy to help.</p>
         `
       })
     })

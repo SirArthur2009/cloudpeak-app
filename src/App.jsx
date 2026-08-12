@@ -5,6 +5,7 @@ import { useAuth } from './lib/useAuth'
 import Puppies from './pages/Puppies'
 import Waitlist from './pages/Waitlist'
 import Pedigrees from './pages/Pedigrees'
+import PortalGuide from './pages/PortalGuide'
 import Admin from './pages/Admin'
 import Login from './pages/Login'
 import ForcePasswordChange from './pages/ForcePasswordChange'
@@ -117,6 +118,7 @@ function App() {
               <NavLink to="/" style={activeLinkStyle}>Available Puppies</NavLink>
               <NavLink to="/pedigrees" style={activeLinkStyle}>Pedigrees</NavLink>
               <NavLink to="/waitlist" style={activeLinkStyle}>Waitlist</NavLink>
+              <NavLink to="/portal-guide" style={activeLinkStyle}>Portal Guide</NavLink>
               {role === 'admin' && (
                 <NavLink to="/admin" style={({ isActive }) => ({ ...activeLinkStyle({ isActive }), color: isActive ? '#1a1a1a' : '#888' })}>Admin</NavLink>
               )}
@@ -158,6 +160,7 @@ function App() {
             <NavLink to="/" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Available Puppies</NavLink>
             <NavLink to="/pedigrees" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Pedigrees</NavLink>
             <NavLink to="/waitlist" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Waitlist</NavLink>
+            <NavLink to="/portal-guide" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Portal Guide</NavLink>
             {role === 'admin' && (
               <NavLink to="/admin" style={mobileLinkStyle} onClick={() => setMenuOpen(false)}>Admin</NavLink>
             )}
@@ -181,6 +184,7 @@ function App() {
           <Route path="/" element={<Puppies />} />
           <Route path="/pedigrees" element={<Pedigrees />} />
           <Route path="/waitlist" element={<Waitlist />} />
+          <Route path="/portal-guide" element={<PortalGuide />} />
           <Route path="/admin" element={role === 'admin' ? <Admin /> : <Navigate to="/" />} />
         </Routes>
       </main>

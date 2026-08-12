@@ -19,10 +19,10 @@ async function callFunction(name, body) {
 export default function Waitlist() {
   const [waitlist, setWaitlist] = useState([])
   const [puppies, setPuppies] = useState([])
+  const [litters, setLitters] = useState([])
+  const [selectedLitterId, setSelectedLitterId] = useState('')
+  const [userEmail, setUserEmail] = useState('')
   const [loading, setLoading] = useState(true)
-  const [activePerson, setActivePerson] = useState(null)
-  const [isMyTurn, setIsMyTurn] = useState(false)
-  const [myEntry, setMyEntry] = useState(null)
   const [isAdmin, setIsAdmin] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const [selectedPuppy, setSelectedPuppy] = useState(null)
@@ -60,7 +60,8 @@ export default function Waitlist() {
   useEffect(() => {
     async function fetchAll() {
       const { data: { session } } = await supabase.auth.getSession()
-      const userEmail = session?.user?.email?.toLowerCase()
+      const currentUserEmail = session?.user?.email?.toLowerCase()
+      setUserEmail(currentUserEmail || '')
 
       const { data: profile } = await supabase
         .from('profiles')
@@ -69,28 +70,34 @@ export default function Waitlist() {
         .single()
       setIsAdmin(profile?.role === 'admin')
 
-      const [{ data: w }, { data: p }] = await Promise.all([
+      const [{ data: w }, { data: p }, { data: l }] = await Promise.all([
         supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
-        supabase.from('puppies').select('*').eq('status', 'available').order('id')
+        supabase.from('puppies').select('*, litters(name)').eq('status', 'available').order('id'),
+        supabase.from('litters').select('id, name').order('created_at', { ascending: false })
       ])
 
       setWaitlist(w || [])
       setPuppies(p || [])
+      const litterList = l || []
+      setLitters(litterList)
 
-      const active = (w || []).find(person => person.is_active)
-      setActivePerson(active || null)
-
-      const mine = (w || []).find(person => person.email?.toLowerCase() === userEmail)
-      setMyEntry(mine || null)
-
-      if (active && userEmail && active.email?.toLowerCase() === userEmail) {
-        setIsMyTurn(true)
-      }
+      const myEntries = (w || []).filter(person => person.email?.toLowerCase() === currentUserEmail)
+      const defaultLitterId = myEntries[0]?.litter_id || litterList[0]?.id
+      if (defaultLitterId) setSelectedLitterId(String(defaultLitterId))
 
       setLoading(false)
     }
     fetchAll()
   }, [])
+
+  const waitlistForLitter = selectedLitterId
+    ? waitlist.filter(person => String(person.litter_id || '') === selectedLitterId)
+    : []
+
+  const activePerson = waitlistForLitter.find(person => person.is_active) || null
+  const myEntry = waitlistForLitter.find(person => person.email?.toLowerCase() === userEmail) || null
+  const isMyTurn = Boolean(activePerson && userEmail && activePerson.email?.toLowerCase() === userEmail)
+  const availablePuppies = puppies.filter(puppy => String(puppy.litter_id || '') === selectedLitterId)
 
   async function handleConfirmSelection() {
     console.log('SERVICE_KEY exists:', !!SERVICE_KEY)
@@ -140,6 +147,25 @@ export default function Waitlist() {
       <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Waitlist</h2>
       <p style={{ color: '#666', marginBottom: '2rem' }}>Positions are assigned after your deposit is received.</p>
 
+      <div style={{ marginBottom: '1.25rem', maxWidth: '420px' }}>
+        <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
+        <select
+          value={selectedLitterId}
+          onChange={(e) => {
+            setSelectedLitterId(e.target.value)
+            setSelecting(false)
+            setSelectedPuppy(null)
+            setConfirmed(false)
+          }}
+          style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
+        >
+          <option value="">Select litter</option>
+          {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
+        </select>
+      </div>
+
+      {!selectedLitterId && <p style={{ color: '#888', marginBottom: '1rem' }}>Select a litter to view its waitlist.</p>}
+
       {activePerson && !isMyTurn && (
         <div style={{ background: '#f5f5ff', border: '1px solid #c5c5f0', borderRadius: '10px', padding: '1.25rem', marginBottom: '2rem' }}>
           <p style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem' }}>🐾 Another family is currently choosing</p>
@@ -151,10 +177,10 @@ export default function Waitlist() {
         <div style={{ background: '#f0faf2', border: '1px solid #b2dfb8', borderRadius: '10px', padding: '1.25rem', marginBottom: '2rem' }}>
           <p style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '0.25rem' }}>🎉 It's your turn to pick!</p>
           <p style={{ color: '#555', fontSize: '0.9rem', marginBottom: '1rem' }}>
-            {puppies.length > 0 ? 'Select a puppy below to submit your request.' : "No puppies are currently available. We'll reach out when they are!"}
+            {availablePuppies.length > 0 ? 'Select a puppy below to submit your request.' : "No puppies are currently available for this litter. We'll reach out when they are!"}
           </p>
 
-          {!selecting && puppies.length > 0 && (
+          {!selecting && availablePuppies.length > 0 && (
             <button onClick={() => setSelecting(true)} style={{ padding: '0.55rem 1.2rem', background: '#1a1a1a', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '0.9rem' }}>
               Choose a Puppy
             </button>
@@ -164,7 +190,7 @@ export default function Waitlist() {
             <div>
               <p style={{ fontWeight: 500, marginBottom: '0.75rem', fontSize: '0.9rem' }}>Available puppies:</p>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
-                {puppies.map(puppy => (
+                {availablePuppies.map(puppy => (
                   <div key={puppy.id} onClick={() => setSelectedPuppy(puppy)} style={{ background: selectedPuppy?.id === puppy.id ? '#1a1a1a' : '#fff', color: selectedPuppy?.id === puppy.id ? '#fff' : '#1a1a1a', border: `2px solid ${selectedPuppy?.id === puppy.id ? '#1a1a1a' : '#ddd'}`, borderRadius: '8px', padding: '0.75rem', cursor: 'pointer', transition: 'all 0.15s' }}>
                     {puppy.photo_url && <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: '4px', marginBottom: '0.5rem' }} />}
                     <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>{puppy.name}</p>
@@ -196,10 +222,10 @@ export default function Waitlist() {
       )}
 
       <h3 style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '1rem' }}>Current Waitlist</h3>
-      {waitlist.length === 0 && <p style={{ color: '#888' }}>The waitlist is currently empty.</p>}
+      {selectedLitterId && waitlistForLitter.length === 0 && <p style={{ color: '#888' }}>This litter waitlist is currently empty.</p>}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        {waitlist.map((person, index) => {
+        {waitlistForLitter.map((person, index) => {
           const isMe = person.email?.toLowerCase() === myEntry?.email?.toLowerCase()
           const isCurrentlyPicking = person.is_active
           const isPending = person.pending_approval

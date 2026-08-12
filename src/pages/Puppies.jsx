@@ -24,10 +24,13 @@ const statusColors = {
 
 export default function Puppies() {
   const [puppies, setPuppies] = useState([])
+  const [litters, setLitters] = useState([])
+  const [selectedLitterId, setSelectedLitterId] = useState('')
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [activePerson, setActivePerson] = useState(null)
   const [isMyTurn, setIsMyTurn] = useState(false)
+  const [userEmail, setUserEmail] = useState('')
   const [selectedPuppy, setSelectedPuppy] = useState(null)
   const [confirmed, setConfirmed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -35,27 +38,60 @@ export default function Puppies() {
 
   useEffect(() => {
     async function fetchAll() {
-      const [puppiesRes, activeRes] = await Promise.all([
+      const { data: { session } } = await supabase.auth.getSession()
+      const currentUserEmail = session?.user?.email?.toLowerCase() || ''
+      setUserEmail(currentUserEmail)
+
+      const [puppiesRes, activeRes, littersRes] = await Promise.all([
         supabase.from('puppies').select('*, litters(name)').order('id'),
-        supabase.from('waitlist').select('*').eq('is_active', true).limit(1)
+        supabase.from('waitlist').select('*').eq('is_active', true),
+        supabase.from('litters').select('id, name').order('created_at', { ascending: false })
       ])
 
       if (puppiesRes.error) console.error('Supabase error:', puppiesRes.error)
       else setPuppies(puppiesRes.data || [])
 
-      const active = activeRes.data?.[0] || null
-      setActivePerson(active)
+      const activeRows = activeRes.data || []
+      const litterList = littersRes.data || []
+      setLitters(litterList)
 
-      if (active) {
-        const { data: { session } } = await supabase.auth.getSession()
-        const userEmail = session?.user?.email?.toLowerCase()
-        setIsMyTurn(Boolean(userEmail && active.email?.toLowerCase() === userEmail))
-      }
+      const myActiveEntry = activeRows.find(row => row.email?.toLowerCase() === currentUserEmail)
+      const defaultLitterId = myActiveEntry?.litter_id || litterList[0]?.id || ''
+      const selectedId = String(defaultLitterId || '')
+      setSelectedLitterId(selectedId)
+
+      const activeForLitter = activeRows.find(row => String(row.litter_id || '') === selectedId) || null
+      setActivePerson(activeForLitter)
+
+      setIsMyTurn(Boolean(currentUserEmail && activeForLitter?.email?.toLowerCase() === currentUserEmail))
 
       setLoading(false)
     }
     fetchAll()
   }, [])
+
+  useEffect(() => {
+    if (!selectedLitterId) {
+      setActivePerson(null)
+      setIsMyTurn(false)
+      return
+    }
+
+    async function refreshActiveForLitter() {
+      const { data } = await supabase
+        .from('waitlist')
+        .select('*')
+        .eq('is_active', true)
+        .eq('litter_id', selectedLitterId)
+        .limit(1)
+
+      const active = data?.[0] || null
+      setActivePerson(active)
+      setIsMyTurn(Boolean(userEmail && active?.email?.toLowerCase() === userEmail))
+    }
+
+    refreshActiveForLitter()
+  }, [selectedLitterId, userEmail])
 
   async function handleConfirmSelection() {
     if (!selectedPuppy || !activePerson) return
@@ -93,9 +129,13 @@ export default function Puppies() {
     setSaving(false)
   }
 
+  const puppiesForLitter = selectedLitterId
+    ? puppies.filter(p => String(p.litter_id || '') === selectedLitterId)
+    : puppies
+
   const filtered = filter === 'all'
-    ? puppies
-    : puppies.filter(p => p.status === filter)
+    ? puppiesForLitter
+    : puppiesForLitter.filter(p => p.status === filter)
 
   return (
     <div>
@@ -105,6 +145,23 @@ export default function Puppies() {
       <p style={{ color: '#666', marginBottom: '1.5rem' }}>
         Browse our current and upcoming puppies below.
       </p>
+
+      <div style={{ marginBottom: '1rem', maxWidth: '420px' }}>
+        <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
+        <select
+          value={selectedLitterId}
+          onChange={(e) => {
+            setSelectedLitterId(e.target.value)
+            setSelectedPuppy(null)
+            setConfirmed(false)
+            setError('')
+          }}
+          style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
+        >
+          <option value="">All litters</option>
+          {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
+        </select>
+      </div>
 
       {/* Filter buttons */}
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
