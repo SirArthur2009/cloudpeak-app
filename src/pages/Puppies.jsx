@@ -16,6 +16,11 @@ async function callFunction(name, body) {
   return res.json()
 }
 
+function isMissingLitterIdColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes("could not find the 'litter_id' column") || msg.includes('column "litter_id" does not exist')
+}
+
 const statusColors = {
   available: { bg: '#e6f4ea', color: '#2d7a3a' },
   reserved: { bg: '#fff4e5', color: '#b36200' },
@@ -78,14 +83,23 @@ export default function Puppies() {
     }
 
     async function refreshActiveForLitter() {
-      const { data } = await supabase
+      const result = await supabase
         .from('waitlist')
         .select('*')
         .eq('is_active', true)
         .eq('litter_id', selectedLitterId)
         .limit(1)
 
-      const active = data?.[0] || null
+      let active = result.data?.[0] || null
+      if (result.error && isMissingLitterIdColumnError(result.error)) {
+        const fallback = await supabase
+          .from('waitlist')
+          .select('*')
+          .eq('is_active', true)
+          .limit(1)
+        active = fallback.data?.[0] || null
+      }
+
       setActivePerson(active)
       setIsMyTurn(Boolean(userEmail && active?.email?.toLowerCase() === userEmail))
     }

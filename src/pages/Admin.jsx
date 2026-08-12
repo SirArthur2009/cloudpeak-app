@@ -39,6 +39,11 @@ async function callFunction(name, body) {
   }
   return data
 }
+
+function isMissingLitterIdColumnError(error) {
+  const msg = String(error?.message || '').toLowerCase()
+  return msg.includes("could not find the 'litter_id' column") || msg.includes('column "litter_id" does not exist')
+}
 // ── Upload a single file to Supabase storage ──
 async function uploadFile(bucket, file) {
   const ext = file.name.split('.').pop()
@@ -1120,6 +1125,7 @@ function WaitlistTab() {
   async function handleSave() {
     setSaving(true)
     setMessage('')
+    let migrationWarning = ''
     if (!form.litter_id) { setMessage('Please select a litter.'); setSaving(false); return }
 
     if (editing === 'new') {
@@ -1127,17 +1133,31 @@ function WaitlistTab() {
       const { error: authError } = await supabase.auth.admin
         ? { error: null }
         : { error: null }
-      const { data: highestPositionRow } = await supabase
+      let highestPositionRow = null
+      const highestByLitter = await supabase
         .from('waitlist')
         .select('position')
         .eq('litter_id', form.litter_id)
         .order('position', { ascending: false })
         .limit(1)
         .maybeSingle()
+
+      if (highestByLitter.error && isMissingLitterIdColumnError(highestByLitter.error)) {
+        const fallbackHighest = await supabase
+          .from('waitlist')
+          .select('position')
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        highestPositionRow = fallbackHighest.data || null
+      } else {
+        highestPositionRow = highestByLitter.data || null
+      }
+
       const defaultPosition = Number(highestPositionRow?.position || 0) + 1
       const position = Number(form.position || defaultPosition)
 
-      const { error } = await supabase.from('waitlist').insert({
+      let { error } = await supabase.from('waitlist').insert({
         name: form.name,
         email: form.email,
         phone: form.phone,
@@ -1145,16 +1165,29 @@ function WaitlistTab() {
         notes: form.notes,
         litter_id: form.litter_id
       })
+      if (error && isMissingLitterIdColumnError(error)) {
+        const retry = await supabase.from('waitlist').insert({
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          position,
+          notes: form.notes
+        })
+        error = retry.error
+        if (!error) {
+          migrationWarning = 'Added without litter assignment. Run the waitlist litter_id migration to enable per-litter queueing.'
+        }
+      }
       if (error) setMessage('Error: ' + error.message)
       else {
         const nextLitterId = String(form.litter_id)
-        setMessage('Added!')
+        setMessage(migrationWarning || 'Added!')
         setEditing(null)
         setSelectedLitterId(nextLitterId)
         fetchAll(nextLitterId)
       }
     } else {
-      const { error } = await supabase.from('waitlist').update({
+      let { error } = await supabase.from('waitlist').update({
         name: form.name,
         email: form.email,
         phone: form.phone,
@@ -1162,10 +1195,23 @@ function WaitlistTab() {
         notes: form.notes,
         litter_id: form.litter_id
       }).eq('id', editing)
+      if (error && isMissingLitterIdColumnError(error)) {
+        const retry = await supabase.from('waitlist').update({
+          name: form.name,
+          email: form.email,
+          phone: form.phone,
+          position: Number(form.position),
+          notes: form.notes
+        }).eq('id', editing)
+        error = retry.error
+        if (!error) {
+          migrationWarning = 'Saved without litter assignment. Run the waitlist litter_id migration to enable per-litter queueing.'
+        }
+      }
       if (error) setMessage('Error: ' + error.message)
       else {
         const nextLitterId = String(form.litter_id)
-        setMessage('Saved!')
+        setMessage(migrationWarning || 'Saved!')
         setEditing(null)
         setSelectedLitterId(nextLitterId)
         fetchAll(nextLitterId)
@@ -1445,7 +1491,7 @@ function ApplicationsTab() {
     setAddingToWaitlistId(app.id)
 
     try {
-      const { data: existingWaitlist } = await supabase
+      const existingRes = await supabase
         .from('waitlist')
         .select('id')
         .ilike('email', email)
@@ -1454,17 +1500,49 @@ function ApplicationsTab() {
         .limit(1)
         .maybeSingle()
 
-      if (!existingWaitlist?.id) {
-        const { data: highestPositionRow } = await supabase
+      let existingWaitlist = existingRes.data
+      let missingLitterColumn = false
+      if (existingRes.error && isMissingLitterIdColumnError(existingRes.error)) {
+        missingLitterColumn = true
+        const fallbackExisting = await supabase
           .from('waitlist')
-          .select('position')
-          .eq('litter_id', litterId)
+          .select('id')
+          .ilike('email', email)
           .order('position', { ascending: false })
           .limit(1)
           .maybeSingle()
+        existingWaitlist = fallbackExisting.data
+      }
+
+      if (!existingWaitlist?.id) {
+        let highestPositionRow = null
+        if (!missingLitterColumn) {
+          const byLitter = await supabase
+            .from('waitlist')
+            .select('position')
+            .eq('litter_id', litterId)
+            .order('position', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          if (byLitter.error && isMissingLitterIdColumnError(byLitter.error)) {
+            missingLitterColumn = true
+          } else {
+            highestPositionRow = byLitter.data || null
+          }
+        }
+
+        if (missingLitterColumn) {
+          const fallbackHighest = await supabase
+            .from('waitlist')
+            .select('position')
+            .order('position', { ascending: false })
+            .limit(1)
+            .maybeSingle()
+          highestPositionRow = fallbackHighest.data || null
+        }
 
         const nextPosition = Number(highestPositionRow?.position || 0) + 1
-        const { error: insertError } = await supabase
+        let { error: insertError } = await supabase
           .from('waitlist')
           .insert({
             name: fullName,
@@ -1475,8 +1553,26 @@ function ApplicationsTab() {
             notes: `Added from application ${app.id}`
           })
 
+        if (insertError && isMissingLitterIdColumnError(insertError)) {
+          missingLitterColumn = true
+          const retryInsert = await supabase
+            .from('waitlist')
+            .insert({
+              name: fullName,
+              email,
+              phone,
+              position: nextPosition,
+              notes: `Added from application ${app.id}`
+            })
+          insertError = retryInsert.error
+        }
+
         if (insertError) {
           throw new Error(insertError.message || 'Failed to insert waitlist row')
+        }
+
+        if (missingLitterColumn) {
+          setSuccess('Added to waitlist without litter assignment. Run the waitlist litter_id migration to enable per-litter queueing.')
         }
       }
 
