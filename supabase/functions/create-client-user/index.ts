@@ -32,7 +32,7 @@ serve(async (req) => {
       email: normalizedEmail,
       password,
       email_confirm: true,
-      user_metadata: {
+      app_metadata: {
         must_change_password: true
       }
     })
@@ -70,7 +70,7 @@ serve(async (req) => {
       const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
         password,
         email_confirm: true,
-        user_metadata: {
+        app_metadata: {
           must_change_password: true
         }
       })

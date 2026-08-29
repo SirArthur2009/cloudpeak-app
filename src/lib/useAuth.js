@@ -17,7 +17,7 @@ export function useAuth() {
   }
 
   function refreshPasswordRequirement(sessionData) {
-    const metadata = sessionData?.user?.user_metadata || {}
+    const metadata = sessionData?.user?.app_metadata || {}
     const shouldChange = Boolean(metadata.must_change_password)
     setMustChangePassword(shouldChange)
   }

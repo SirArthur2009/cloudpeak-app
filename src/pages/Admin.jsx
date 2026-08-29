@@ -1857,8 +1857,6 @@ function ApplicationsTab() {
             <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#666' }}>{statusCounts.archived + statusCounts.other}</p>
           </div>
         </div>
-
-        <div style={{ marginTop: '1rem' }}>{controlPanel}</div>
       </div>
 
       <div style={{ background: 'linear-gradient(180deg, #fafafa 0%, #f6f6f6 100%)', border: '1px solid #e8e8e8', borderRadius: '12px', padding: isMobile ? '0.7rem' : '0.9rem', marginBottom: '1rem', display: 'grid', gap: '0.75rem' }}>

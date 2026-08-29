@@ -36,7 +36,9 @@ function App() {
     setPasswordChangeSuccess('')
     setPasswordChangeLoading(true)
 
-    const { error } = await supabase.auth.updateUser({ password: newPassword })
+    const { error } = await supabase.functions.invoke('complete-first-password-change', {
+      body: { password: newPassword }
+    })
 
     if (error) {
       setPasswordChangeError(error.message)
@@ -44,12 +46,9 @@ function App() {
       return
     }
 
-    const { error: profileError } = await supabase.auth.updateUser({
-      data: { must_change_password: false }
-    })
-
-    if (profileError) {
-      setPasswordChangeError(profileError.message)
+    const { error: refreshError } = await supabase.auth.refreshSession()
+    if (refreshError) {
+      setPasswordChangeError(refreshError.message)
       setPasswordChangeLoading(false)
       return
     }

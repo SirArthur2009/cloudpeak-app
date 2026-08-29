@@ -32,6 +32,10 @@ entrypoint = "./functions/create-client-user/index.ts"
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/create-client-user/*.html" ]
 
+[functions.complete-first-password-change]
+enabled = true
+verify_jwt = true
+
 [functions.delete-client-user]
 enabled = true
 verify_jwt = true
