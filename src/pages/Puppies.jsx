@@ -29,6 +29,7 @@ const statusColors = {
 
 export default function Puppies() {
   const [puppies, setPuppies] = useState([])
+  const [photosByPuppy, setPhotosByPuppy] = useState({})
   const [litters, setLitters] = useState([])
   const [selectedLitterId, setSelectedLitterId] = useState('')
   const [loading, setLoading] = useState(true)
@@ -43,6 +44,7 @@ export default function Puppies() {
   const [error, setError] = useState('')
   const [isAdmin, setIsAdmin] = useState(false)
   const [assignedLitterId, setAssignedLitterId] = useState('')
+  const [gallery, setGallery] = useState(null)
 
   useEffect(() => {
     async function fetchAll() {
@@ -64,18 +66,29 @@ export default function Puppies() {
 
       const assignedLitterId = myWaitlistEntries?.[0]?.litter_id || ''
       setAssignedLitterId(String(assignedLitterId))
-      const [puppiesRes, activeRes, littersRes] = await Promise.all([
+      const [puppiesRes, activeRes, littersRes, photosRes] = await Promise.all([
         supabase.from('puppies').select('*, litters(name)').order('id'),
         userIsAdmin
           ? supabase.from('waitlist').select('*').eq('is_active', true)
           : assignedLitterId
           ? supabase.from('waitlist').select('*').eq('is_active', true).eq('litter_id', assignedLitterId)
           : Promise.resolve({ data: [], error: null }),
-        supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+        supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
+        supabase.from('puppy_photos').select('puppy_id, photo_url, caption, sort_order, created_at').order('sort_order').order('created_at')
       ])
 
       if (puppiesRes.error) console.error('Supabase error:', puppiesRes.error)
       else setPuppies(puppiesRes.data || [])
+
+      if (photosRes.error) console.error('Puppy photos error:', photosRes.error)
+      else {
+        const groupedPhotos = (photosRes.data || []).reduce((groups, photo) => {
+          const puppyId = String(photo.puppy_id)
+          groups[puppyId] = [...(groups[puppyId] || []), photo]
+          return groups
+        }, {})
+        setPhotosByPuppy(groupedPhotos)
+      }
 
       const activeRows = activeRes.data || []
       const litterList = littersRes.data || []
@@ -128,6 +141,19 @@ export default function Puppies() {
     refreshActiveForLitter()
   }, [selectedLitterId, userEmail])
 
+  useEffect(() => {
+    if (!gallery) return undefined
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') setGallery(null)
+      if (event.key === 'ArrowLeft') setGallery(current => current && { ...current, photoIndex: Math.max(0, current.photoIndex - 1) })
+      if (event.key === 'ArrowRight') setGallery(current => current && { ...current, photoIndex: Math.min(current.photos.length - 1, current.photoIndex + 1) })
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [gallery])
+
   async function handleConfirmSelection() {
     if (!selectedPuppy || !activePerson) return
     if (!isAdmin && String(selectedPuppy.litter_id || '') !== assignedLitterId) {
@@ -179,6 +205,15 @@ export default function Puppies() {
   const filtered = filter === 'all'
     ? puppiesForLitter
     : puppiesForLitter.filter(p => p.status === filter)
+
+  function openGallery(puppy) {
+    const extraPhotos = photosByPuppy[String(puppy.id)] || []
+    const photos = [
+      ...(puppy.photo_url ? [{ photo_url: puppy.photo_url, caption: null }] : []),
+      ...extraPhotos.filter(photo => photo.photo_url !== puppy.photo_url)
+    ]
+    setGallery({ puppy, photos, photoIndex: 0 })
+  }
 
   return (
     <div>
@@ -306,9 +341,14 @@ export default function Puppies() {
           return (
             <div
               key={puppy.id}
-              onClick={() => {
-                if (canSelectPuppy) {
-                  setSelectedPuppy(isSelected ? null : puppy)
+              role="button"
+              tabIndex={0}
+              aria-label={`View photos of ${puppy.name}`}
+              onClick={() => openGallery(puppy)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault()
+                  openGallery(puppy)
                 }
               }}
               style={{
@@ -316,7 +356,7 @@ export default function Puppies() {
                 border: isSelected ? '2px solid #1a1a1a' : '1px solid #e0e0e0',
                 borderRadius: '10px',
                 overflow: 'hidden',
-                cursor: canSelectPuppy ? 'pointer' : 'default',
+                cursor: 'pointer',
                 transform: isSelected ? 'scale(1.02)' : 'none',
                 transition: 'all 0.15s'
               }}
@@ -347,7 +387,7 @@ export default function Puppies() {
                 )}
                 {canSelectPuppy && (
                   <p style={{ color: '#888', fontSize: '0.8rem', marginTop: '0.5rem', fontStyle: 'italic' }}>
-                    {isSelected ? '✓ Selected — confirm above' : 'Click to select'}
+                    {isSelected ? 'Selected - confirm above' : 'Click to view photos and select'}
                   </p>
                 )}
               </div>
@@ -355,6 +395,52 @@ export default function Puppies() {
           )
         })}
       </div>
+
+      {gallery && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${gallery.puppy.name} photo gallery`}
+          onClick={() => setGallery(null)}
+          style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'grid', placeItems: 'center', padding: '1rem', background: 'rgba(0, 0, 0, 0.82)' }}
+        >
+          <div
+            onClick={(event) => event.stopPropagation()}
+            style={{ width: 'min(900px, 100%)', maxHeight: 'calc(100vh - 2rem)', display: 'flex', flexDirection: 'column', background: '#fff', borderRadius: '8px', overflow: 'hidden' }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '0.85rem 1rem', borderBottom: '1px solid #e0e0e0' }}>
+              <div>
+                <p style={{ fontWeight: 600 }}>{gallery.puppy.name}</p>
+                {gallery.photos.length > 1 && <p style={{ color: '#666', fontSize: '0.8rem', marginTop: '0.15rem' }}>{gallery.photoIndex + 1} of {gallery.photos.length}</p>}
+              </div>
+              <button onClick={() => setGallery(null)} aria-label="Close photo gallery" title="Close" style={{ width: '2.25rem', height: '2.25rem', border: 'none', background: 'transparent', color: '#333', cursor: 'pointer', fontSize: '1.7rem', lineHeight: 1 }}>&times;</button>
+            </div>
+
+            <div style={{ position: 'relative', minHeight: '240px', background: '#161616', display: 'grid', placeItems: 'center' }}>
+              {gallery.photos.length > 0
+                ? <img src={gallery.photos[gallery.photoIndex].photo_url} alt={gallery.photos[gallery.photoIndex].caption || `${gallery.puppy.name} photo ${gallery.photoIndex + 1}`} style={{ display: 'block', width: '100%', maxHeight: 'calc(100vh - 13rem)', objectFit: 'contain' }} />
+                : <p style={{ color: '#fff' }}>No photos available for this puppy.</p>
+              }
+              {gallery.photos.length > 1 && <>
+                <button onClick={() => setGallery(current => ({ ...current, photoIndex: Math.max(0, current.photoIndex - 1) }))} disabled={gallery.photoIndex === 0} aria-label="Previous photo" title="Previous photo" style={{ position: 'absolute', left: '0.75rem', width: '2.5rem', height: '2.5rem', border: 'none', borderRadius: '50%', background: 'rgba(255, 255, 255, 0.9)', color: '#1a1a1a', cursor: gallery.photoIndex === 0 ? 'default' : 'pointer', fontSize: '1.5rem', opacity: gallery.photoIndex === 0 ? 0.45 : 1 }}>&lsaquo;</button>
+                <button onClick={() => setGallery(current => ({ ...current, photoIndex: Math.min(current.photos.length - 1, current.photoIndex + 1) }))} disabled={gallery.photoIndex === gallery.photos.length - 1} aria-label="Next photo" title="Next photo" style={{ position: 'absolute', right: '0.75rem', width: '2.5rem', height: '2.5rem', border: 'none', borderRadius: '50%', background: 'rgba(255, 255, 255, 0.9)', color: '#1a1a1a', cursor: gallery.photoIndex === gallery.photos.length - 1 ? 'default' : 'pointer', fontSize: '1.5rem', opacity: gallery.photoIndex === gallery.photos.length - 1 ? 0.45 : 1 }}>&rsaquo;</button>
+              </>}
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', padding: '0.85rem 1rem', flexWrap: 'wrap' }}>
+              <p style={{ color: '#666', fontSize: '0.9rem' }}>{gallery.photos[gallery.photoIndex]?.caption || `${gallery.puppy.gender} - ${gallery.puppy.color}`}</p>
+              {isMyTurn && !confirmed && gallery.puppy.status === 'available' && (isAdmin || String(gallery.puppy.litter_id || '') === assignedLitterId) && (
+                <button
+                  onClick={() => { setSelectedPuppy(gallery.puppy); setGallery(null) }}
+                  style={{ padding: '0.55rem 1rem', background: '#2d7a3a', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  {selectedPuppy?.id === gallery.puppy.id ? `${gallery.puppy.name} selected` : `Select ${gallery.puppy.name}`}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
