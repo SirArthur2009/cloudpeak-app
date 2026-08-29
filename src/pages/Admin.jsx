@@ -1278,7 +1278,10 @@ function WaitlistTab() {
     }
 
     try {
-      await callFunction('delete-client-user', { email: person.email })
+      const result = await callFunction('delete-client-user', { id: person.id, email: person.email })
+      if (!result?.waitlist_entries_deleted) {
+        throw new Error('The waitlist entry was not found. Refresh the page and try again.')
+      }
       setMessage(`${person.name}'s account and related records have been deleted.`)
     } catch (err) {
       console.error('Failed to delete client records:', err)
@@ -1626,21 +1629,19 @@ function ApplicationsTab() {
 
   async function handleDeleteApplication(app) {
     const applicantName = [app.first_name, app.last_name].filter(Boolean).join(' ') || 'this application'
-    if (!confirm(`Delete ${applicantName}? This cannot be undone.`)) return
+    if (!confirm(`Delete ${applicantName} and all of their waitlist, application, and portal account data? This cannot be undone.`)) return
 
     setDeletingId(app.id)
-    const { error: deleteError } = await supabase
-      .from('applications')
-      .delete()
-      .eq('id', app.id)
-
-    if (deleteError) {
-      setError(deleteError.message || 'Unable to delete application')
+    setError('')
+    try {
+      await callFunction('delete-client-user', { email: app.email })
+    } catch (err) {
+      setError(err?.message || 'Unable to delete applicant records')
       setDeletingId(null)
       return
     }
 
-    setApplications(prev => prev.filter(item => item.id !== app.id))
+    setApplications(prev => prev.filter(item => item.email?.toLowerCase() !== app.email?.toLowerCase()))
     setDeletingId(null)
   }
 

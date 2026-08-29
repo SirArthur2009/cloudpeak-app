@@ -49,10 +49,11 @@ serve(async (req) => {
       .ilike('email', normalizedEmail)
     if (applicationsDeleteError) throw applicationsDeleteError
 
-    const { error: waitlistDeleteError } = await supabase
+    const { data: deletedWaitlistRows, error: waitlistDeleteError } = await supabase
       .from('waitlist')
       .delete()
       .ilike('email', normalizedEmail)
+      .select('id')
     if (waitlistDeleteError) throw waitlistDeleteError
 
     const { data: usersData, error: usersError } = await supabase.auth.admin.listUsers({ perPage: 1000 })
@@ -60,11 +61,17 @@ serve(async (req) => {
     const user = usersData.users.find(user => user.email?.toLowerCase() === normalizedEmail)
 
     if (user) {
+      const { error: profileDeleteError } = await supabase
+        .from('profiles')
+        .delete()
+        .eq('id', user.id)
+      if (profileDeleteError) throw profileDeleteError
+
       const { error: authDeleteError } = await supabase.auth.admin.deleteUser(user.id)
       if (authDeleteError) throw authDeleteError
     }
 
-    return new Response(JSON.stringify({ ok: true, released_puppies: selectedPuppyIds.length }), {
+    return new Response(JSON.stringify({ ok: true, released_puppies: selectedPuppyIds.length, waitlist_entries_deleted: deletedWaitlistRows?.length || 0 }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (err) {
