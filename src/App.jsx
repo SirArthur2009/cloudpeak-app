@@ -59,7 +59,7 @@ function App() {
     setPasswordChangeError('')
     setTimeout(() => {
       setPasswordChangeSuccess('')
-      window.location.reload()
+      window.location.assign('/portal-guide')
     }, 800)
   }
 

@@ -33,6 +33,7 @@ export default function Puppies() {
   const [selectedLitterId, setSelectedLitterId] = useState('')
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
+  const [clientView, setClientView] = useState('assigned')
   const [activePerson, setActivePerson] = useState(null)
   const [isMyTurn, setIsMyTurn] = useState(false)
   const [userEmail, setUserEmail] = useState('')
@@ -40,6 +41,8 @@ export default function Puppies() {
   const [confirmed, setConfirmed] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [isAdmin, setIsAdmin] = useState(false)
+  const [assignedLitterId, setAssignedLitterId] = useState('')
 
   useEffect(() => {
     async function fetchAll() {
@@ -47,9 +50,27 @@ export default function Puppies() {
       const currentUserEmail = session?.user?.email?.toLowerCase() || ''
       setUserEmail(currentUserEmail)
 
+      const [{ data: profile }, { data: myWaitlistEntries }] = await Promise.all([
+        supabase.from('profiles').select('role').eq('id', session?.user?.id).single(),
+        supabase
+          .from('waitlist')
+          .select('litter_id')
+          .ilike('email', currentUserEmail)
+          .order('position')
+          .limit(1)
+      ])
+      const userIsAdmin = profile?.role === 'admin'
+      setIsAdmin(userIsAdmin)
+
+      const assignedLitterId = myWaitlistEntries?.[0]?.litter_id || ''
+      setAssignedLitterId(String(assignedLitterId))
       const [puppiesRes, activeRes, littersRes] = await Promise.all([
         supabase.from('puppies').select('*, litters(name)').order('id'),
-        supabase.from('waitlist').select('*').eq('is_active', true),
+        userIsAdmin
+          ? supabase.from('waitlist').select('*').eq('is_active', true)
+          : assignedLitterId
+          ? supabase.from('waitlist').select('*').eq('is_active', true).eq('litter_id', assignedLitterId)
+          : Promise.resolve({ data: [], error: null }),
         supabase.from('litters').select('id, name').order('created_at', { ascending: false })
       ])
 
@@ -61,7 +82,7 @@ export default function Puppies() {
       setLitters(litterList)
 
       const myActiveEntry = activeRows.find(row => row.email?.toLowerCase() === currentUserEmail)
-      const defaultLitterId = myActiveEntry?.litter_id || litterList[0]?.id || ''
+      const defaultLitterId = myActiveEntry?.litter_id || assignedLitterId || (userIsAdmin ? litterList[0]?.id : '')
       const selectedId = String(defaultLitterId || '')
       setSelectedLitterId(selectedId)
 
@@ -109,6 +130,10 @@ export default function Puppies() {
 
   async function handleConfirmSelection() {
     if (!selectedPuppy || !activePerson) return
+    if (!isAdmin && String(selectedPuppy.litter_id || '') !== assignedLitterId) {
+      setError('You can only select a puppy from your assigned litter.')
+      return
+    }
     setSaving(true)
     setError('')
 
@@ -143,9 +168,13 @@ export default function Puppies() {
     setSaving(false)
   }
 
-  const puppiesForLitter = selectedLitterId
-    ? puppies.filter(p => String(p.litter_id || '') === selectedLitterId)
-    : puppies
+  const puppiesForLitter = isAdmin
+    ? selectedLitterId
+      ? puppies.filter(p => String(p.litter_id || '') === selectedLitterId)
+      : puppies
+    : clientView === 'assigned'
+      ? puppies.filter(p => String(p.litter_id || '') === assignedLitterId)
+      : puppies.filter(p => String(p.litter_id || '') !== assignedLitterId)
 
   const filtered = filter === 'all'
     ? puppiesForLitter
@@ -160,24 +189,50 @@ export default function Puppies() {
         Browse our current and upcoming puppies below.
       </p>
 
-      <div style={{ marginBottom: '1rem', maxWidth: '420px' }}>
-        <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
-        <select
-          value={selectedLitterId}
-          onChange={(e) => {
-            setSelectedLitterId(e.target.value)
-            setSelectedPuppy(null)
-            setConfirmed(false)
-            setError('')
-          }}
-          style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
-        >
-          <option value="">All litters</option>
-          {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
-        </select>
-      </div>
+      {isAdmin ? (
+        <div style={{ marginBottom: '1rem', maxWidth: '420px' }}>
+          <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
+          <select
+            value={selectedLitterId}
+            onChange={(e) => {
+              setSelectedLitterId(e.target.value)
+              setSelectedPuppy(null)
+              setConfirmed(false)
+              setError('')
+            }}
+            style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
+          >
+            <option value="">All litters</option>
+            {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
+          </select>
+        </div>
+      ) : null}
 
-      {/* Filter buttons */}
+      {!isAdmin && assignedLitterId && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
+          <button
+            onClick={() => { setClientView('assigned'); setSelectedPuppy(null); setConfirmed(false); setError('') }}
+            style={{
+              padding: '0.4rem 1rem', borderRadius: '6px', border: '1px solid #ddd',
+              background: clientView === 'assigned' ? '#1a1a1a' : '#fff',
+              color: clientView === 'assigned' ? '#fff' : '#333', cursor: 'pointer', fontWeight: clientView === 'assigned' ? 600 : 400
+            }}
+          >
+            Your Litter
+          </button>
+          <button
+            onClick={() => { setClientView('other'); setSelectedPuppy(null); setConfirmed(false); setError('') }}
+            style={{
+              padding: '0.4rem 1rem', borderRadius: '6px', border: '1px solid #ddd',
+              background: clientView === 'other' ? '#1a1a1a' : '#fff',
+              color: clientView === 'other' ? '#fff' : '#333', cursor: 'pointer', fontWeight: clientView === 'other' ? 600 : 400
+            }}
+          >
+            Other Litters
+          </button>
+        </div>
+      )}
+
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
         {['all', 'available', 'reserved', 'sold'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
@@ -247,11 +302,12 @@ export default function Puppies() {
         {filtered.map(puppy => {
           const s = statusColors[puppy.status] || statusColors.sold
           const isSelected = selectedPuppy?.id === puppy.id
+          const canSelectPuppy = isMyTurn && !confirmed && puppy.status === 'available' && (isAdmin || String(puppy.litter_id || '') === assignedLitterId)
           return (
             <div
               key={puppy.id}
               onClick={() => {
-                if (isMyTurn && !confirmed && puppy.status === 'available') {
+                if (canSelectPuppy) {
                   setSelectedPuppy(isSelected ? null : puppy)
                 }
               }}
@@ -260,7 +316,7 @@ export default function Puppies() {
                 border: isSelected ? '2px solid #1a1a1a' : '1px solid #e0e0e0',
                 borderRadius: '10px',
                 overflow: 'hidden',
-                cursor: isMyTurn && !confirmed && puppy.status === 'available' ? 'pointer' : 'default',
+                cursor: canSelectPuppy ? 'pointer' : 'default',
                 transform: isSelected ? 'scale(1.02)' : 'none',
                 transition: 'all 0.15s'
               }}
@@ -289,7 +345,7 @@ export default function Puppies() {
                 {puppy.notes && (
                   <p style={{ color: '#666', fontSize: '0.85rem', marginTop: '0.5rem' }}>{puppy.notes}</p>
                 )}
-                {isMyTurn && !confirmed && puppy.status === 'available' && (
+                {canSelectPuppy && (
                   <p style={{ color: '#888', fontSize: '0.8rem', marginTop: '0.5rem', fontStyle: 'italic' }}>
                     {isSelected ? '✓ Selected — confirm above' : 'Click to select'}
                   </p>

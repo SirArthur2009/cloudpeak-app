@@ -564,7 +564,7 @@ function PuppiesTab() {
 
   useEffect(() => { fetchAll() }, [])
 
-  async function fetchAll(forLitterId = selectedLitterId) {
+  async function fetchAll() {
     const [{ data: p }, { data: l }, { data: r }] = await Promise.all([
       supabase.from('puppies').select('*, litters(name)').order('id'),
       supabase.from('litters').select('*').order('id'),

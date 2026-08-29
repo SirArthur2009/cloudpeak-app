@@ -68,21 +68,32 @@ export default function Waitlist() {
         .select('role')
         .eq('id', session?.user?.id)
         .single()
-      setIsAdmin(profile?.role === 'admin')
+      const userIsAdmin = profile?.role === 'admin'
+      setIsAdmin(userIsAdmin)
 
-      const [{ data: w }, { data: p }, { data: l }, { data: allPuppies }] = await Promise.all([
-        supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
-        supabase.from('puppies').select('*, litters(name)').eq('status', 'available').order('id'),
-        supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
+      const { data: myWaitlistEntries } = userIsAdmin
+        ? { data: [] }
+        : await supabase
+          .from('waitlist')
+          .select('litter_id')
+          .ilike('email', currentUserEmail || '')
+          .order('position')
+          .limit(1)
+
+      const assignedLitterId = myWaitlistEntries?.[0]?.litter_id || ''
+      const littersQuery = supabase
+        .from('litters')
+        .select('id, name, sire, dam')
+        .order('created_at', { ascending: false })
+      const [littersResult, allPuppiesResult] = await Promise.all([
+        userIsAdmin ? littersQuery : littersQuery.eq('id', assignedLitterId),
         supabase.from('puppies').select('litter_id, status')
       ])
 
-      setWaitlist(w || [])
-      setPuppies(p || [])
-      const litterList = l || []
+      const litterList = littersResult.data || []
       const puppyStatsByLitter = new Map()
 
-      for (const puppy of allPuppies || []) {
+      for (const puppy of allPuppiesResult.data || []) {
         const litterId = String(puppy.litter_id || '')
         if (!litterId) continue
         const current = puppyStatsByLitter.get(litterId) || { total: 0, available: 0 }
@@ -91,20 +102,27 @@ export default function Waitlist() {
         puppyStatsByLitter.set(litterId, current)
       }
 
-      const eligibleLitters = litterList.filter((litter) => {
+      const visibleLitters = userIsAdmin ? litterList.filter((litter) => {
         const stats = puppyStatsByLitter.get(String(litter.id))
         return !stats || stats.total === 0 || stats.available > 0
-      })
+      }) : litterList
 
-      setLitters(eligibleLitters)
-      const eligibleLitterIds = new Set(eligibleLitters.map(litter => String(litter.id)))
+      setLitters(visibleLitters)
+      const defaultLitterId = userIsAdmin ? visibleLitters[0]?.id : assignedLitterId
+      const selectedId = String(defaultLitterId || '')
+      setSelectedLitterId(selectedId)
 
-      const myEntries = (w || []).filter(person => person.email?.toLowerCase() === currentUserEmail)
-      const preferredLitterId = myEntries[0]?.litter_id
-      const defaultLitterId = eligibleLitterIds.has(String(preferredLitterId || ''))
-        ? preferredLitterId
-        : eligibleLitters[0]?.id
-      if (defaultLitterId) setSelectedLitterId(String(defaultLitterId))
+      if (selectedId) {
+        const [waitlistResult, puppiesResult] = await Promise.all([
+          supabase.from('waitlist').select('*, puppies(name, color, gender)').eq('litter_id', selectedId).order('position'),
+          supabase.from('puppies').select('*, litters(name)').eq('status', 'available').eq('litter_id', selectedId).order('id')
+        ])
+        setWaitlist(waitlistResult.data || [])
+        setPuppies(puppiesResult.data || [])
+      } else {
+        setWaitlist([])
+        setPuppies([])
+      }
 
       setLoading(false)
     }
@@ -119,6 +137,22 @@ export default function Waitlist() {
   const myEntry = waitlistForLitter.find(person => person.email?.toLowerCase() === userEmail) || null
   const isMyTurn = Boolean(activePerson && userEmail && activePerson.email?.toLowerCase() === userEmail)
   const availablePuppies = puppies.filter(puppy => String(puppy.litter_id || '') === selectedLitterId)
+  const selectedLitter = litters.find(litter => String(litter.id) === selectedLitterId)
+  const litterParents = [selectedLitter?.dam, selectedLitter?.sire].filter(Boolean).join(' and ')
+
+  async function handleLitterChange(litterId) {
+    setSelectedLitterId(litterId)
+    setSelecting(false)
+    setSelectedPuppy(null)
+    setConfirmed(false)
+
+    const [waitlistResult, puppiesResult] = await Promise.all([
+      supabase.from('waitlist').select('*, puppies(name, color, gender)').eq('litter_id', litterId).order('position'),
+      supabase.from('puppies').select('*, litters(name)').eq('status', 'available').eq('litter_id', litterId).order('id')
+    ])
+    setWaitlist(waitlistResult.data || [])
+    setPuppies(puppiesResult.data || [])
+  }
 
   async function handleConfirmSelection() {
     console.log('SERVICE_KEY exists:', !!SERVICE_KEY)
@@ -165,25 +199,24 @@ export default function Waitlist() {
 
   return (
     <div>
-      <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>Waitlist</h2>
+      <h2 style={{ fontSize: '1.5rem', fontWeight: 600, marginBottom: '0.5rem' }}>
+        {selectedLitter ? `${selectedLitter.name}${litterParents ? ` - ${litterParents}` : ''}` : 'Waitlist'}
+      </h2>
       <p style={{ color: '#666', marginBottom: '2rem' }}>Positions are assigned after your deposit is received.</p>
 
-      <div style={{ marginBottom: '1.25rem', maxWidth: '420px' }}>
-        <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
-        <select
-          value={selectedLitterId}
-          onChange={(e) => {
-            setSelectedLitterId(e.target.value)
-            setSelecting(false)
-            setSelectedPuppy(null)
-            setConfirmed(false)
-          }}
-          style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
-        >
-          <option value="">Select litter</option>
-          {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
-        </select>
-      </div>
+      {isAdmin && (
+        <div style={{ marginBottom: '1.25rem', maxWidth: '420px' }}>
+          <label style={{ display: 'block', fontSize: '0.85rem', color: '#666', marginBottom: '0.35rem' }}>Litter</label>
+          <select
+            value={selectedLitterId}
+            onChange={(e) => handleLitterChange(e.target.value)}
+            style={{ width: '100%', padding: '0.55rem', border: '1px solid #ddd', borderRadius: '6px', fontSize: '0.9rem' }}
+          >
+            <option value="">Select litter</option>
+            {litters.map(litter => <option key={litter.id} value={litter.id}>{litter.name}</option>)}
+          </select>
+        </div>
+      )}
 
       {!selectedLitterId && <p style={{ color: '#888', marginBottom: '1rem' }}>Select a litter to view its waitlist.</p>}
 
