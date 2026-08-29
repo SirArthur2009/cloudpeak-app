@@ -11,24 +11,60 @@ serve(async (req) => {
 
   try {
     const { email } = await req.json()
+    const normalizedEmail = String(email || '').trim().toLowerCase()
+
+    if (!normalizedEmail) {
+      return new Response(JSON.stringify({ error: 'Email is required' }), {
+        status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
 
     const supabase = createClient(
       Deno.env.get('SUPABASE_URL')!,
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
-    // Find user by email
-    const { data: { users } } = await supabase.auth.admin.listUsers()
-    const user = users.find(u => u.email === email)
+    const { data: waitlistRows, error: waitlistFetchError } = await supabase
+      .from('waitlist')
+      .select('selected_puppy_id')
+      .ilike('email', normalizedEmail)
 
-    if (!user) return new Response(JSON.stringify({ error: 'User not found' }), {
-      status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    if (waitlistFetchError) throw waitlistFetchError
 
-    // Delete auth user (profiles row cascades automatically)
-    await supabase.auth.admin.deleteUser(user.id)
+    const selectedPuppyIds = (waitlistRows || [])
+      .map(row => row.selected_puppy_id)
+      .filter(Boolean)
 
-    return new Response(JSON.stringify({ ok: true }), {
+    if (selectedPuppyIds.length) {
+      const { error: puppyUpdateError } = await supabase
+        .from('puppies')
+        .update({ status: 'available' })
+        .in('id', selectedPuppyIds)
+      if (puppyUpdateError) throw puppyUpdateError
+    }
+
+    const { error: applicationsDeleteError } = await supabase
+      .from('applications')
+      .delete()
+      .ilike('email', normalizedEmail)
+    if (applicationsDeleteError) throw applicationsDeleteError
+
+    const { error: waitlistDeleteError } = await supabase
+      .from('waitlist')
+      .delete()
+      .ilike('email', normalizedEmail)
+    if (waitlistDeleteError) throw waitlistDeleteError
+
+    const { data: usersData, error: usersError } = await supabase.auth.admin.listUsers({ perPage: 1000 })
+    if (usersError) throw usersError
+    const user = usersData.users.find(user => user.email?.toLowerCase() === normalizedEmail)
+
+    if (user) {
+      const { error: authDeleteError } = await supabase.auth.admin.deleteUser(user.id)
+      if (authDeleteError) throw authDeleteError
+    }
+
+    return new Response(JSON.stringify({ ok: true, released_puppies: selectedPuppyIds.length }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   } catch (err) {

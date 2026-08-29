@@ -1269,13 +1269,24 @@ function WaitlistTab() {
   async function handleDelete(id) {
     if (!confirm('Remove this person from the waitlist and delete their account?')) return
     setSaving(true)
+    setMessage('')
     const person = waitlist.find(w => w.id === id)
-    if (person?.email) {
-      try {
-        await callFunction('delete-client-user', { email: person.email })
-      } catch (err) { console.error('Failed to delete auth user:', err) }
+    if (!person?.email) {
+      setMessage('Error: This person has no email address, so their related records cannot be safely removed.')
+      setSaving(false)
+      return
     }
-    await supabase.from('waitlist').delete().eq('id', id)
+
+    try {
+      await callFunction('delete-client-user', { email: person.email })
+      setMessage(`${person.name}'s account and related records have been deleted.`)
+    } catch (err) {
+      console.error('Failed to delete client records:', err)
+      setMessage(`Error: ${err.message || 'Unable to delete this person.'}`)
+      setSaving(false)
+      return
+    }
+
     fetchAll()
     setSaving(false)
   }
@@ -1419,6 +1430,7 @@ function ApplicationsTab() {
     const { data, error: fetchError } = await supabase
       .from('applications')
       .select('*')
+      .or('status.is.null,status.neq.archived')
       .order('created_at', { ascending: false })
 
     if (fetchError) {
@@ -1757,7 +1769,6 @@ function ApplicationsTab() {
             <option value="all">All</option>
             <option value="new">New</option>
             <option value="reviewed">Reviewed</option>
-            <option value="archived">Archived</option>
             <option value="unknown">Unknown</option>
           </select>
         </div>
@@ -1839,24 +1850,6 @@ function ApplicationsTab() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: '0.65rem', marginTop: '1rem' }}>
-          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
-            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Total</p>
-            <p style={{ fontSize: '1.15rem', fontWeight: 800 }}>{statusCounts.total}</p>
-          </div>
-          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
-            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>New</p>
-            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#2d7a3a' }}>{statusCounts.new}</p>
-          </div>
-          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
-            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Reviewed</p>
-            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#5555cc' }}>{statusCounts.reviewed}</p>
-          </div>
-          <div style={{ background: '#fff', border: '1px solid #ece7d6', borderRadius: '12px', padding: '0.75rem 0.8rem' }}>
-            <p style={{ fontSize: '0.72rem', color: '#777', marginBottom: '0.15rem' }}>Archived / Other</p>
-            <p style={{ fontSize: '1.15rem', fontWeight: 800, color: '#666' }}>{statusCounts.archived + statusCounts.other}</p>
-          </div>
-        </div>
       </div>
 
       <div style={{ background: 'linear-gradient(180deg, #fafafa 0%, #f6f6f6 100%)', border: '1px solid #e8e8e8', borderRadius: '12px', padding: isMobile ? '0.7rem' : '0.9rem', marginBottom: '1rem', display: 'grid', gap: '0.75rem' }}>
@@ -2098,10 +2091,89 @@ function ApplicationsTab() {
   )
 }
 
+function ArchivedApplicationsTab() {
+  const [applications, setApplications] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [savingId, setSavingId] = useState(null)
+
+  async function fetchApplications() {
+    setLoading(true)
+    setError('')
+    const { data, error: fetchError } = await supabase
+      .from('applications')
+      .select('id, first_name, last_name, email, phone, created_at')
+      .eq('status', 'archived')
+      .order('created_at', { ascending: false })
+
+    if (fetchError) {
+      setError(fetchError.message || 'Unable to load archived applications')
+      setApplications([])
+    } else {
+      setApplications(data || [])
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchApplications()
+  }, [])
+
+  async function restoreApplication(application) {
+    setSavingId(application.id)
+    const { error: updateError } = await supabase
+      .from('applications')
+      .update({ status: 'new' })
+      .eq('id', application.id)
+
+    if (updateError) {
+      setError(updateError.message || 'Unable to restore application')
+    } else {
+      setApplications(current => current.filter(item => item.id !== application.id))
+    }
+    setSavingId(null)
+  }
+
+  if (loading) return <p style={{ color: '#888' }}>Loading archived applications...</p>
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <div>
+          <h4 style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Archived Applications</h4>
+          <p style={{ fontSize: '0.85rem', color: '#666' }}>Applications are archived automatically when a client picks a puppy.</p>
+        </div>
+        <button onClick={fetchApplications} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd' }}>Refresh</button>
+      </div>
+      {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+      {!error && applications.length === 0 && <p style={{ color: '#888' }}>No archived applications.</p>}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+        {applications.map(application => {
+          const fullName = [application.first_name, application.last_name].filter(Boolean).join(' ') || 'Unnamed Applicant'
+          const submittedAt = application.created_at ? new Date(application.created_at).toLocaleString() : 'Unknown date'
+          return (
+            <div key={application.id} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '0.85rem 1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <p style={{ fontWeight: 600 }}>{fullName}</p>
+                <p style={{ fontSize: '0.82rem', color: '#666', marginTop: '0.2rem' }}>{application.email || 'No email'}{application.phone ? ` - ${application.phone}` : ''}</p>
+                <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '0.2rem' }}>Submitted {submittedAt}</p>
+              </div>
+              <button onClick={() => restoreApplication(application)} disabled={savingId === application.id} style={{ ...btnStyle, background: '#eef4ff', border: '1px solid #c9dcff', color: '#1f4f9b' }}>
+                {savingId === application.id ? 'Restoring...' : 'Restore to Applications'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function SettingsTab() {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const [failures, setFailures] = useState([])
+  const [settingsView, setSettingsView] = useState('tools')
 
   async function handleResendAllApplications() {
     if (!confirm('Resend email notifications for all puppy applications?')) return
@@ -2127,6 +2199,13 @@ function SettingsTab() {
       <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
         Admin maintenance tools.
       </p>
+
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+        <button onClick={() => setSettingsView('tools')} style={{ ...btnStyle, background: settingsView === 'tools' ? '#1a1a1a' : '#fff', border: settingsView === 'tools' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'tools' ? '#fff' : '#333' }}>Tools</button>
+        <button onClick={() => setSettingsView('archived-applications')} style={{ ...btnStyle, background: settingsView === 'archived-applications' ? '#1a1a1a' : '#fff', border: settingsView === 'archived-applications' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'archived-applications' ? '#fff' : '#333' }}>Archived Applications</button>
+      </div>
+
+      {settingsView === 'archived-applications' ? <ArchivedApplicationsTab /> : <>
 
       {message && (
         <p style={{ color: message.startsWith('Error:') ? 'red' : '#2d7a3a', marginBottom: '1rem' }}>
@@ -2174,6 +2253,7 @@ function SettingsTab() {
           </div>
         )}
       </div>
+      </>}
     </div>
   )
 }

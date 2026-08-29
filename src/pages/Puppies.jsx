@@ -27,6 +27,31 @@ const statusColors = {
   sold: { bg: '#f0f0f0', color: '#888' }
 }
 
+async function archiveLatestApplicationForEmail(email) {
+  if (!email) return
+
+  const normalized = email.trim().toLowerCase()
+  const { data: latestApplication, error: fetchError } = await supabase
+    .from('applications')
+    .select('id')
+    .ilike('email', normalized)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (fetchError || !latestApplication?.id) {
+    if (fetchError) console.warn('Could not fetch latest application to archive:', fetchError.message)
+    return
+  }
+
+  const { error: archiveError } = await supabase
+    .from('applications')
+    .update({ status: 'archived' })
+    .eq('id', latestApplication.id)
+
+  if (archiveError) console.warn('Could not archive application:', archiveError.message)
+}
+
 export default function Puppies() {
   const [puppies, setPuppies] = useState([])
   const [photosByPuppy, setPhotosByPuppy] = useState({})
@@ -179,6 +204,8 @@ export default function Puppies() {
       setSaving(false)
       return
     }
+
+    await archiveLatestApplicationForEmail(activePerson.email)
 
     // Email admins
     try {
