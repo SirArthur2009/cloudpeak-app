@@ -120,7 +120,8 @@ serve(async (req) => {
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    return new Response(JSON.stringify({ error: message }), {
+    console.error(message)
+    return new Response(JSON.stringify({ error: 'Failed to send reply' }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
