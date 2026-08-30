@@ -2170,6 +2170,166 @@ function ArchivedApplicationsTab() {
   )
 }
 
+function EmailTab() {
+  const [emails, setEmails] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [selectedThreadId, setSelectedThreadId] = useState(null)
+  const [replyMessage, setReplyMessage] = useState('')
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
+
+  async function fetchEmails() {
+    setLoading(true)
+    setError('')
+    const { data, error: fetchError } = await supabase
+      .from('emails')
+      .select('id, thread_id, direction, from_email, to_email, subject, text_body, html_body, is_read, created_at')
+      .order('created_at', { ascending: true })
+
+    if (fetchError) {
+      setError(fetchError.message || 'Unable to load emails')
+      setEmails([])
+    } else {
+      setEmails(data || [])
+    }
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    fetchEmails()
+  }, [])
+
+  const threads = useMemo(() => {
+    const byThread = new Map()
+    for (const email of emails) {
+      const list = byThread.get(email.thread_id) || []
+      list.push(email)
+      byThread.set(email.thread_id, list)
+    }
+    return Array.from(byThread.entries())
+      .map(([threadId, list]) => ({
+        threadId,
+        messages: list,
+        latest: list[list.length - 1],
+        unreadCount: list.filter(m => m.direction === 'inbound' && !m.is_read).length,
+      }))
+      .sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at))
+  }, [emails])
+
+  const selectedThread = threads.find(t => t.threadId === selectedThreadId) || null
+
+  async function selectThread(thread) {
+    setSelectedThreadId(thread.threadId)
+    setReplyMessage('')
+    setSendError('')
+    const unreadIds = thread.messages.filter(m => m.direction === 'inbound' && !m.is_read).map(m => m.id)
+    if (unreadIds.length > 0) {
+      await supabase.from('emails').update({ is_read: true }).in('id', unreadIds)
+      setEmails(current => current.map(e => unreadIds.includes(e.id) ? { ...e, is_read: true } : e))
+    }
+  }
+
+  async function handleReply() {
+    if (!selectedThread || !replyMessage.trim()) return
+    const lastInbound = [...selectedThread.messages].reverse().find(m => m.direction === 'inbound')
+    const to = lastInbound?.from_email || selectedThread.latest.from_email
+    const subject = selectedThread.latest.subject || ''
+
+    setSending(true)
+    setSendError('')
+    try {
+      await callFunction('send-email-reply', {
+        thread_id: selectedThread.threadId,
+        to,
+        subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`,
+        message: replyMessage,
+      })
+      setReplyMessage('')
+      await fetchEmails()
+    } catch (err) {
+      setSendError(err.message)
+    }
+    setSending(false)
+  }
+
+  if (loading) return <p style={{ color: '#888' }}>Loading email...</p>
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
+        <div>
+          <h4 style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Email</h4>
+          <p style={{ fontSize: '0.85rem', color: '#666' }}>Messages received via cloudpeaksilverlabradors.com are also forwarded to cloudpeaksilverlabs@yahoo.com.</p>
+        </div>
+        <button onClick={fetchEmails} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd' }}>Refresh</button>
+      </div>
+      {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+      {!error && threads.length === 0 && <p style={{ color: '#888' }}>No email yet.</p>}
+
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div style={{ flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
+          {threads.map(thread => (
+            <button
+              key={thread.threadId}
+              onClick={() => selectThread(thread)}
+              style={{
+                textAlign: 'left',
+                padding: '0.65rem 0.75rem',
+                borderRadius: '8px',
+                border: thread.threadId === selectedThreadId ? '1px solid #1a1a1a' : '1px solid #ddd',
+                background: thread.threadId === selectedThreadId ? '#f3f3f3' : '#fff',
+                cursor: 'pointer',
+              }}
+            >
+              <p style={{ fontWeight: thread.unreadCount > 0 ? 700 : 500, marginBottom: '0.2rem' }}>
+                {thread.latest.direction === 'inbound' ? thread.latest.from_email : thread.latest.to_email}
+                {thread.unreadCount > 0 && <span style={{ marginLeft: '0.4rem', color: '#c0392b' }}>({thread.unreadCount} new)</span>}
+              </p>
+              <p style={{ fontSize: '0.85rem', color: '#333', marginBottom: '0.15rem' }}>{thread.latest.subject || '(no subject)'}</p>
+              <p style={{ fontSize: '0.75rem', color: '#888' }}>{new Date(thread.latest.created_at).toLocaleString()}</p>
+            </button>
+          ))}
+        </div>
+
+        {selectedThread && (
+          <div style={{ flex: '2 1 400px', minWidth: '300px', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '340px', overflowY: 'auto', marginBottom: '1rem' }}>
+              {selectedThread.messages.map(message => (
+                <div key={message.id} style={{ background: message.direction === 'inbound' ? '#f7f7f7' : '#eef4ff', borderRadius: '8px', padding: '0.65rem 0.75rem' }}>
+                  <p style={{ fontSize: '0.8rem', color: '#555', marginBottom: '0.3rem' }}>
+                    <strong>{message.direction === 'inbound' ? message.from_email : `You → ${message.to_email}`}</strong>
+                    {' · '}{new Date(message.created_at).toLocaleString()}
+                  </p>
+                  {message.html_body
+                    ? <div dangerouslySetInnerHTML={{ __html: message.html_body }} />
+                    : <p style={{ whiteSpace: 'pre-wrap' }}>{message.text_body}</p>}
+                </div>
+              ))}
+            </div>
+
+            {sendError && <p style={{ color: 'red', marginBottom: '0.5rem' }}>Error: {sendError}</p>}
+            <textarea
+              value={replyMessage}
+              onChange={e => setReplyMessage(e.target.value)}
+              placeholder="Write a reply..."
+              rows={4}
+              style={{ ...inputStyle, marginBottom: '0.5rem', resize: 'vertical' }}
+            />
+            <button
+              onClick={handleReply}
+              disabled={sending || !replyMessage.trim()}
+              style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.6rem 1rem' }}
+            >
+              {sending ? 'Sending...' : 'Send Reply'}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function SettingsTab() {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
@@ -2203,10 +2363,13 @@ function SettingsTab() {
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
         <button onClick={() => setSettingsView('tools')} style={{ ...btnStyle, background: settingsView === 'tools' ? '#1a1a1a' : '#fff', border: settingsView === 'tools' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'tools' ? '#fff' : '#333' }}>Tools</button>
+        <button onClick={() => setSettingsView('email')} style={{ ...btnStyle, background: settingsView === 'email' ? '#1a1a1a' : '#fff', border: settingsView === 'email' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'email' ? '#fff' : '#333' }}>Email</button>
         <button onClick={() => setSettingsView('archived-applications')} style={{ ...btnStyle, background: settingsView === 'archived-applications' ? '#1a1a1a' : '#fff', border: settingsView === 'archived-applications' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'archived-applications' ? '#fff' : '#333' }}>Archived Applications</button>
       </div>
 
-      {settingsView === 'archived-applications' ? <ArchivedApplicationsTab /> : <>
+      {settingsView === 'archived-applications' && <ArchivedApplicationsTab />}
+      {settingsView === 'email' && <EmailTab />}
+      {settingsView === 'tools' && <>
 
       {message && (
         <p style={{ color: message.startsWith('Error:') ? 'red' : '#2d7a3a', marginBottom: '1rem' }}>
