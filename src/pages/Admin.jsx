@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
+import DOMPurify from 'dompurify'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 
@@ -2302,7 +2303,7 @@ function EmailTab() {
                     {' · '}{new Date(message.created_at).toLocaleString()}
                   </p>
                   {message.html_body
-                    ? <div dangerouslySetInnerHTML={{ __html: message.html_body }} />
+                    ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.html_body) }} />
                     : <p style={{ whiteSpace: 'pre-wrap' }}>{message.text_body}</p>}
                 </div>
               ))}

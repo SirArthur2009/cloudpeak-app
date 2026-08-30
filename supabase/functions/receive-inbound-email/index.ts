@@ -70,14 +70,16 @@ serve(async (req) => {
     const rawBody = await req.text()
     const webhookSecret = Deno.env.get('RESEND_WEBHOOK_SECRET')
 
-    if (webhookSecret) {
-      const valid = await verifySignature(req, rawBody, webhookSecret)
-      if (!valid) {
-        return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        })
-      }
+    if (!webhookSecret) {
+      throw new Error('Missing RESEND_WEBHOOK_SECRET; refusing to process unverifiable webhook requests')
+    }
+
+    const valid = await verifySignature(req, rawBody, webhookSecret)
+    if (!valid) {
+      return new Response(JSON.stringify({ error: 'Invalid webhook signature' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      })
     }
 
     const event = JSON.parse(rawBody)
