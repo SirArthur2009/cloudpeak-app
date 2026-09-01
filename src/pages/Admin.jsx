@@ -2235,6 +2235,7 @@ function EmailTab() {
     if (!selectedThread || !replyMessage.trim()) return
     const lastInbound = [...selectedThread.messages].reverse().find(m => m.direction === 'inbound')
     const to = lastInbound?.from_email || selectedThread.latest.from_email
+    const replyTo = lastInbound?.to_email || ''
     const subject = selectedThread.latest.subject || ''
 
     setSending(true)
@@ -2243,6 +2244,7 @@ function EmailTab() {
       const result = await callFunction('send-email-reply', {
         thread_id: selectedThread.threadId,
         to,
+        reply_to: replyTo,
         subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`,
         message: replyMessage,
       })

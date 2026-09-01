@@ -18,6 +18,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const DEFAULT_FORWARD_TO = 'cloudpeaksilverlabs@yahoo.com'
+
 function getBearerToken(authHeader: string | null): string {
   if (!authHeader) return ''
   const [type, token] = authHeader.split(' ')
@@ -73,7 +75,7 @@ serve(async (req) => {
       })
     }
 
-    const { thread_id, to, subject, message } = await req.json()
+    const { thread_id, to, subject, message, reply_to } = await req.json()
     if (!thread_id || !to || !message) {
       return new Response(JSON.stringify({ error: 'thread_id, to, and message are required' }), {
         status: 400,
@@ -82,6 +84,7 @@ serve(async (req) => {
     }
 
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>'
+    const forwardTo = Deno.env.get('FORWARD_TO_EMAIL') || DEFAULT_FORWARD_TO
     const replySubject = subject && subject.trim().length > 0 ? subject : 'Re: your message'
     const authHeaderValue = 'Bearer ' + resendKey
 
@@ -91,6 +94,8 @@ serve(async (req) => {
       body: JSON.stringify({
         from: fromEmail,
         to,
+        bcc: forwardTo,
+        reply_to: reply_to || undefined,
         subject: replySubject,
         html: `<p>${String(message).replace(/\n/g, '<br />')}</p>`,
         text: message,
