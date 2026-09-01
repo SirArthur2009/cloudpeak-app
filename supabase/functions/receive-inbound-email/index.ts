@@ -5,7 +5,7 @@
 // webhook (Resend dashboard → Webhooks → Add Endpoint, event: email.received).
 //
 // Required secrets (set via Supabase dashboard → Edge Functions → Secrets):
-//   RESEND_API_KEY            — used to fetch the full received email + forward it
+//   RESEND_EMAIL_API_KEY      — used to fetch the full received email + forward it
 //   RESEND_WEBHOOK_SECRET     — the "Signing Secret" shown for the webhook endpoint
 //   RESEND_FROM_EMAIL         — optional, sender used for the forwarded copy
 //   FORWARD_TO_EMAIL          — optional, defaults to cloudpeaksilverlabs@yahoo.com
@@ -22,7 +22,7 @@ const corsHeaders = {
 
 const DEFAULT_FORWARD_TO = 'cloudpeaksilverlabs@yahoo.com'
 
-function base64ToBytes(b64: string): Uint8Array {
+function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   const bin = atob(b64)
   const bytes = new Uint8Array(bin.length)
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
@@ -92,9 +92,9 @@ serve(async (req) => {
     }
 
     const emailId = event?.data?.email_id
-    const resendKey = Deno.env.get('RESEND_API_KEY')
+    const resendKey = Deno.env.get('RESEND_EMAIL_API_KEY')
     if (!emailId || !resendKey) {
-      throw new Error('Missing email_id or RESEND_API_KEY')
+      throw new Error('Missing email_id or RESEND_EMAIL_API_KEY')
     }
 
     // The webhook payload only contains metadata; fetch the full body.

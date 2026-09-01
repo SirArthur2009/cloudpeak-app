@@ -2240,13 +2240,16 @@ function EmailTab() {
     setSending(true)
     setSendError('')
     try {
-      await callFunction('send-email-reply', {
+      const result = await callFunction('send-email-reply', {
         thread_id: selectedThread.threadId,
         to,
         subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`,
         message: replyMessage,
       })
       setReplyMessage('')
+      if (result.email) {
+        setEmails(current => [...current, result.email])
+      }
       await fetchEmails()
     } catch (err) {
       setSendError(err.message)

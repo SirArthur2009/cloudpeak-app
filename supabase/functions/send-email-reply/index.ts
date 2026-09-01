@@ -5,7 +5,7 @@
 // Settings > Email tab. Sends via Resend and stores the outbound copy.
 //
 // Required secrets (set via Supabase dashboard → Edge Functions → Secrets):
-//   RESEND_API_KEY            — get a free key at resend.com
+//   RESEND_EMAIL_API_KEY      — key for inbox replies, separate from application notifications
 //   RESEND_FROM_EMAIL         — optional, sender used for replies
 //   SUPABASE_URL              — auto-set by Supabase
 //   SUPABASE_SERVICE_ROLE_KEY — auto-set by Supabase
@@ -33,13 +33,13 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? ''
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    const resendKey = Deno.env.get('RESEND_API_KEY')
+    const resendKey = Deno.env.get('RESEND_EMAIL_API_KEY')
 
     if (!supabaseUrl || !serviceRoleKey) {
       throw new Error('Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
     }
     if (!resendKey) {
-      throw new Error('Missing RESEND_API_KEY')
+      throw new Error('Missing RESEND_EMAIL_API_KEY')
     }
 
     const adminClient = createClient(supabaseUrl, serviceRoleKey)
@@ -102,26 +102,30 @@ serve(async (req) => {
     }
     const sendData = await sendRes.json()
 
-    const { error: insertError } = await adminClient.from('emails').insert({
-      thread_id,
-      direction: 'outbound',
-      resend_id: sendData?.id ?? null,
-      from_email: fromEmail,
-      to_email: to,
-      subject: replySubject,
-      text_body: message,
-      html_body: `<p>${String(message).replace(/\n/g, '<br />')}</p>`,
-      is_read: true,
-    })
+    const { data: savedEmail, error: insertError } = await adminClient
+      .from('emails')
+      .insert({
+        thread_id,
+        direction: 'outbound',
+        resend_id: sendData?.id ?? null,
+        from_email: fromEmail,
+        to_email: to,
+        subject: replySubject,
+        text_body: message,
+        html_body: `<p>${String(message).replace(/\n/g, '<br />')}</p>`,
+        is_read: true,
+      })
+      .select('id, thread_id, direction, from_email, to_email, subject, text_body, html_body, is_read, created_at')
+      .single()
     if (insertError) throw new Error(`Could not store outbound email: ${insertError.message}`)
 
-    return new Response(JSON.stringify({ ok: true }), {
+    return new Response(JSON.stringify({ ok: true, email: savedEmail }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.error(message)
-    return new Response(JSON.stringify({ error: 'Failed to send reply' }), {
+    return new Response(JSON.stringify({ error: message }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     })
