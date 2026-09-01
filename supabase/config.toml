@@ -77,3 +77,16 @@ entrypoint = "./functions/send-client-portal-credentials/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/send-client-portal-credentials/*.html" ]
+
+[functions.receive-inbound-email]
+enabled = true
+# Called by Resend's inbound email webhook, not by our own frontend, so it
+# must not require a Supabase user JWT. The function verifies the request
+# using Resend's own webhook signature instead (RESEND_WEBHOOK_SECRET).
+verify_jwt = false
+entrypoint = "./functions/receive-inbound-email/index.ts"
+
+[functions.send-email-reply]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/send-email-reply/index.ts"
