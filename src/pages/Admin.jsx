@@ -1397,14 +1397,14 @@ function WaitlistTab() {
 
 function ApplicationsTab() {
   const [applications, setApplications] = useState([])
-  const [litters, setLitters] = useState([])
-  const [selectedLitterByApp, setSelectedLitterByApp] = useState({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const [statusSavingId, setStatusSavingId] = useState(null)
-  const [addingToWaitlistId, setAddingToWaitlistId] = useState(null)
+  const [editingAppId, setEditingAppId] = useState(null)
+  const [editAppForm, setEditAppForm] = useState({})
+  const [appSaving, setAppSaving] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [controlsOpen, setControlsOpen] = useState(false)
   const [query, setQuery] = useState('')
@@ -1418,7 +1418,6 @@ function ApplicationsTab() {
 
   useEffect(() => {
     fetchApplications()
-    fetchLitters()
   }, [])
 
   useEffect(() => {
@@ -1448,201 +1447,73 @@ function ApplicationsTab() {
     setLoading(false)
   }
 
-  async function fetchLitters() {
-    const [{ data: littersData }, { data: puppiesData }] = await Promise.all([
-      supabase
-        .from('litters')
-        .select('id, name')
-        .order('created_at', { ascending: false }),
-      supabase.from('puppies').select('litter_id, status')
-    ])
-
-    const puppyStatsByLitter = new Map()
-
-    for (const puppy of puppiesData || []) {
-      const litterId = String(puppy.litter_id || '')
-      if (!litterId) continue
-      const current = puppyStatsByLitter.get(litterId) || { total: 0, available: 0 }
-      current.total += 1
-      if (puppy.status === 'available') current.available += 1
-      puppyStatsByLitter.set(litterId, current)
-    }
-
-    const list = (littersData || []).filter((litter) => {
-      const stats = puppyStatsByLitter.get(String(litter.id))
-      return !stats || stats.total === 0 || stats.available > 0
+  function startEditApp(app) {
+    setEditingAppId(app.id)
+    setEditAppForm({
+      first_name: app.first_name || '',
+      last_name: app.last_name || '',
+      email: app.email || '',
+      phone: app.phone || '',
+      address_line1: app.address_line1 || '',
+      address_line2: app.address_line2 || '',
+      city: app.city || '',
+      state: app.state || '',
+      zip: app.zip || '',
+      country: app.country || '',
+      gender_preference: app.gender_preference || '',
+      color_preference: app.color_preference || '',
+      registration_type: app.registration_type || '',
+      home_situation: app.home_situation || '',
+      has_fence: app.has_fence || '',
+      indoor_outdoor: app.indoor_outdoor || '',
+      vet_info: app.vet_info || '',
+      training_goals: app.training_goals || '',
+      how_found: app.how_found || '',
+      purchase_agreement_questions: app.purchase_agreement_questions || '',
+      other_questions: app.other_questions || '',
+      status: app.status || 'new'
     })
-
-    setLitters(list)
   }
 
-  function generateTemporaryPassword() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
-    let out = ''
-    for (let i = 0; i < 12; i += 1) {
-      out += alphabet[Math.floor(Math.random() * alphabet.length)]
-    }
-    return out
-  }
-
-  async function handleAddToWaitlist(app, litterId) {
+  async function handleSaveAppEdit(appId) {
+    setAppSaving(true)
     setError('')
     setSuccess('')
+    const { error: updateError } = await supabase
+      .from('applications')
+      .update(editAppForm)
+      .eq('id', appId)
 
-    if (!litterId) {
-      setError('Choose a litter before adding this application to the waitlist.')
-      return
+    if (updateError) {
+      setError(updateError.message || 'Unable to update application')
+    } else {
+      setApplications(prev => prev.map(a => a.id === appId ? { ...a, ...editAppForm } : a))
+      setSuccess('Application updated successfully!')
+      setEditingAppId(null)
     }
-
-    const email = (app.email || '').trim().toLowerCase()
-    if (!email) {
-      setError('Cannot add to waitlist: application has no email.')
-      return
-    }
-
-    const fullName = [app.first_name, app.last_name].filter(Boolean).join(' ').trim() || 'New Client'
-    const phone = app.phone || ''
-    const tempPassword = generateTemporaryPassword()
-
-    setAddingToWaitlistId(app.id)
-
-    try {
-      const existingRes = await supabase
-        .from('waitlist')
-        .select('id')
-        .ilike('email', email)
-        .eq('litter_id', litterId)
-        .order('position', { ascending: false })
-        .limit(1)
-        .maybeSingle()
-
-      let existingWaitlist = existingRes.data
-      let missingLitterColumn = false
-      if (existingRes.error && isMissingLitterIdColumnError(existingRes.error)) {
-        missingLitterColumn = true
-        const fallbackExisting = await supabase
-          .from('waitlist')
-          .select('id')
-          .ilike('email', email)
-          .order('position', { ascending: false })
-          .limit(1)
-          .maybeSingle()
-        existingWaitlist = fallbackExisting.data
-      }
-
-      if (!existingWaitlist?.id) {
-        let highestPositionRow = null
-        if (!missingLitterColumn) {
-          const byLitter = await supabase
-            .from('waitlist')
-            .select('position')
-            .eq('litter_id', litterId)
-            .order('position', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-          if (byLitter.error && isMissingLitterIdColumnError(byLitter.error)) {
-            missingLitterColumn = true
-          } else {
-            highestPositionRow = byLitter.data || null
-          }
-        }
-
-        if (missingLitterColumn) {
-          const fallbackHighest = await supabase
-            .from('waitlist')
-            .select('position')
-            .order('position', { ascending: false })
-            .limit(1)
-            .maybeSingle()
-          highestPositionRow = fallbackHighest.data || null
-        }
-
-        const nextPosition = Number(highestPositionRow?.position || 0) + 1
-        let { error: insertError } = await supabase
-          .from('waitlist')
-          .insert({
-            name: fullName,
-            email,
-            phone,
-            position: nextPosition,
-            litter_id: litterId,
-            notes: `Added from application ${app.id}`
-          })
-
-        if (insertError && isMissingLitterIdColumnError(insertError)) {
-          missingLitterColumn = true
-          const retryInsert = await supabase
-            .from('waitlist')
-            .insert({
-              name: fullName,
-              email,
-              phone,
-              position: nextPosition,
-              notes: `Added from application ${app.id}`
-            })
-          insertError = retryInsert.error
-        }
-
-        if (insertError) {
-          throw new Error(insertError.message || 'Failed to insert waitlist row')
-        }
-
-        if (missingLitterColumn) {
-          setSuccess('Added to waitlist without litter assignment. Run the waitlist litter_id migration to enable per-litter queueing.')
-        }
-      }
-
-      await callFunction('create-client-user', {
-        email,
-        password: tempPassword,
-        name: fullName
-      })
-
-      await callFunction('send-client-portal-credentials', {
-        clientName: fullName,
-        clientEmail: email,
-        password: tempPassword,
-        portalUrl: PORTAL_URL
-      })
-
-      const { error: statusError } = await supabase
-        .from('applications')
-        .update({ status: 'reviewed' })
-        .eq('id', app.id)
-
-      if (statusError) {
-        throw new Error(statusError.message || 'Waitlist added, but failed to update application status.')
-      }
-
-      setApplications(prev => prev.map(item => (
-        item.id === app.id ? { ...item, status: 'reviewed' } : item
-      )))
-
-      const selectedLitter = litters.find(l => String(l.id) === String(litterId))
-      const litterName = selectedLitter?.name || 'selected litter'
-      setSuccess(`Added ${fullName} to the ${litterName} waitlist and sent portal credentials.`)
-    } catch (err) {
-      setError(err?.message || 'Unable to add to waitlist')
-    }
-
-    setAddingToWaitlistId(null)
+    setAppSaving(false)
   }
 
-  async function handleDeleteApplication(app) {
+  async function handleDeleteApplicationOnly(app) {
     const applicantName = [app.first_name, app.last_name].filter(Boolean).join(' ') || 'this application'
-    if (!confirm(`Delete ${applicantName} and all of their waitlist, application, and portal account data? This cannot be undone.`)) return
+    if (!confirm(`Delete application for ${applicantName}? This will ONLY delete this application entry.`)) return
 
     setDeletingId(app.id)
     setError('')
-    try {
-      await callFunction('delete-client-user', { email: app.email })
-    } catch (err) {
-      setError(err?.message || 'Unable to delete applicant records')
+    setSuccess('')
+    const { error: deleteError } = await supabase
+      .from('applications')
+      .delete()
+      .eq('id', app.id)
+
+    if (deleteError) {
+      setError(deleteError.message || 'Unable to delete application')
       setDeletingId(null)
       return
     }
 
-    setApplications(prev => prev.filter(item => item.email?.toLowerCase() !== app.email?.toLowerCase()))
+    setApplications(prev => prev.filter(item => item.id !== app.id))
+    setSuccess(`Deleted application for ${applicantName}.`)
     setDeletingId(null)
   }
 
@@ -1826,7 +1697,7 @@ function ApplicationsTab() {
             </p>
             <h3 style={{ fontWeight: 800, fontSize: isMobile ? '1.2rem' : '1.45rem', marginBottom: '0.25rem' }}>Applications</h3>
             <p style={{ fontSize: '0.9rem', color: '#666', lineHeight: 1.55 }}>
-              Review every submission in one place, filter what matters, and scan the details quickly.
+              Review every submission in one place, edit application details, and archive or remove applications.
             </p>
           </div>
 
@@ -1876,6 +1747,7 @@ function ApplicationsTab() {
         {filteredApplications.map((app) => (
           <details
             key={app.id}
+            open={editingAppId === app.id ? true : undefined}
             style={{
               background: '#fff',
               border: '1px solid #e8e8e8',
@@ -1915,17 +1787,23 @@ function ApplicationsTab() {
             </summary>
 
             <div style={{ marginTop: density === 'compact' ? '0.65rem' : '0.85rem', borderTop: '1px solid #f0f0f0', paddingTop: density === 'compact' ? '0.75rem' : '0.95rem', display: 'grid', gap: sectionGap }}>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {app.email && (
-                  <a href={`mailto:${app.email}`} style={{ fontSize: '0.8rem', color: '#333', background: '#f8f8f8', border: '1px solid #ececec', borderRadius: '999px', padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem', textDecoration: 'none', minHeight: '36px', display: 'inline-flex', alignItems: 'center' }}>
-                    Email
-                  </a>
-                )}
-                {app.phone && (
-                  <a href={`tel:${app.phone}`} style={{ fontSize: '0.8rem', color: '#333', background: '#f8f8f8', border: '1px solid #ececec', borderRadius: '999px', padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem', textDecoration: 'none', minHeight: '36px', display: 'inline-flex', alignItems: 'center' }}>
-                    Call
-                  </a>
-                )}
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button
+                  onClick={() => editingAppId === app.id ? setEditingAppId(null) : startEditApp(app)}
+                  style={{
+                    ...btnStyle,
+                    fontSize: '0.8rem',
+                    color: '#1a1a1a',
+                    background: '#f0f0f0',
+                    border: '1px solid #ddd',
+                    borderRadius: '999px',
+                    padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
+                    minHeight: '36px'
+                  }}
+                >
+                  {editingAppId === app.id ? 'Cancel Edit' : 'Edit Application'}
+                </button>
+
                 {(app.status || '').toLowerCase() === 'archived' ? (
                   <button
                     onClick={() => handleSetApplicationStatus(app, 'new')}
@@ -1961,32 +1839,9 @@ function ApplicationsTab() {
                     {statusSavingId === app.id ? 'Saving...' : 'Archive'}
                   </button>
                 )}
+
                 <button
-                  onClick={() => handleAddToWaitlist(app, selectedLitterByApp[app.id])}
-                  disabled={addingToWaitlistId === app.id || !selectedLitterByApp[app.id]}
-                  style={{
-                    ...btnStyle,
-                    fontSize: '0.8rem',
-                    color: '#084298',
-                    background: '#e7f1ff',
-                    border: '1px solid #b8d3ff',
-                    borderRadius: '999px',
-                    padding: isMobile ? '0.42rem 0.82rem' : '0.24rem 0.6rem',
-                    minHeight: '36px'
-                  }}
-                >
-                  {addingToWaitlistId === app.id ? 'Adding...' : 'Add to Waitlist'}
-                </button>
-                <select
-                  value={selectedLitterByApp[app.id] || ''}
-                  onChange={(e) => setSelectedLitterByApp(prev => ({ ...prev, [app.id]: e.target.value }))}
-                  style={{ ...inputStyle, fontSize: '0.8rem', maxWidth: isMobile ? '100%' : '220px' }}
-                >
-                  <option value="">Select litter for waitlist</option>
-                  {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-                </select>
-                <button
-                  onClick={() => handleDeleteApplication(app)}
+                  onClick={() => handleDeleteApplicationOnly(app)}
                   disabled={deletingId === app.id}
                   style={{
                     ...btnStyle,
@@ -1999,94 +1854,594 @@ function ApplicationsTab() {
                     minHeight: '36px'
                   }}
                 >
-                  {deletingId === app.id ? 'Deleting...' : 'Delete'}
+                  {deletingId === app.id ? 'Deleting...' : 'Delete Application'}
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: bodyColumns, gap: density === 'compact' ? '0.7rem' : '0.9rem', alignItems: 'start' }}>
-                <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
-                  {showAddress && (
-                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
-                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem' }}>Address</p>
-                      <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.5 }}>
-                        {[app.address_line1, app.address_line2, app.city, app.state, app.zip, app.country].filter(Boolean).join(', ') || 'Not provided'}
-                      </p>
-                    </section>
-                  )}
-
-                  {showPreferences && (
-                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
-                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Preferences</p>
-                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Gender</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.gender_preference || 'Not provided'}</p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Color</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.color_preference || 'Not provided'}</p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Registration</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.registration_type || 'Not provided'}</p>
-                        </div>
-                      </div>
-                    </section>
-                  )}
+              {editingAppId === app.id ? (
+                <div style={{ background: '#fafafa', border: '1px solid #e0e0e0', borderRadius: '12px', padding: '1rem', display: 'grid', gap: '0.75rem' }}>
+                  <h4 style={{ fontWeight: 600, fontSize: '0.95rem' }}>Edit Application Details</h4>
+                  <FormGrid>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>First Name</label><input style={inputStyle} value={editAppForm.first_name} onChange={e => setEditAppForm({ ...editAppForm, first_name: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Last Name</label><input style={inputStyle} value={editAppForm.last_name} onChange={e => setEditAppForm({ ...editAppForm, last_name: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Email</label><input style={inputStyle} value={editAppForm.email} onChange={e => setEditAppForm({ ...editAppForm, email: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Phone</label><input style={inputStyle} value={editAppForm.phone} onChange={e => setEditAppForm({ ...editAppForm, phone: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Address Line 1</label><input style={inputStyle} value={editAppForm.address_line1} onChange={e => setEditAppForm({ ...editAppForm, address_line1: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Address Line 2</label><input style={inputStyle} value={editAppForm.address_line2} onChange={e => setEditAppForm({ ...editAppForm, address_line2: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>City</label><input style={inputStyle} value={editAppForm.city} onChange={e => setEditAppForm({ ...editAppForm, city: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>State</label><input style={inputStyle} value={editAppForm.state} onChange={e => setEditAppForm({ ...editAppForm, state: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Zip</label><input style={inputStyle} value={editAppForm.zip} onChange={e => setEditAppForm({ ...editAppForm, zip: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Gender Preference</label><input style={inputStyle} value={editAppForm.gender_preference} onChange={e => setEditAppForm({ ...editAppForm, gender_preference: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Color Preference</label><input style={inputStyle} value={editAppForm.color_preference} onChange={e => setEditAppForm({ ...editAppForm, color_preference: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Registration Type</label><input style={inputStyle} value={editAppForm.registration_type} onChange={e => setEditAppForm({ ...editAppForm, registration_type: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Home Situation</label><input style={inputStyle} value={editAppForm.home_situation} onChange={e => setEditAppForm({ ...editAppForm, home_situation: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Fence / Containment</label><input style={inputStyle} value={editAppForm.has_fence} onChange={e => setEditAppForm({ ...editAppForm, has_fence: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Indoor / Outdoor</label><input style={inputStyle} value={editAppForm.indoor_outdoor} onChange={e => setEditAppForm({ ...editAppForm, indoor_outdoor: e.target.value })} /></div>
+                    <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Status</label>
+                      <select style={inputStyle} value={editAppForm.status} onChange={e => setEditAppForm({ ...editAppForm, status: e.target.value })}>
+                        <option value="new">New</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="archived">Archived</option>
+                      </select>
+                    </div>
+                  </FormGrid>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                    <button onClick={() => handleSaveAppEdit(app.id)} disabled={appSaving} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.6rem 1.2rem' }}>
+                      {appSaving ? 'Saving...' : 'Save Changes'}
+                    </button>
+                    <button onClick={() => setEditingAppId(null)} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', padding: '0.6rem 1rem' }}>Cancel</button>
+                  </div>
                 </div>
+              ) : (
+                <div style={{ display: 'grid', gridTemplateColumns: bodyColumns, gap: density === 'compact' ? '0.7rem' : '0.9rem', alignItems: 'start' }}>
+                  <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
+                    {showAddress && (
+                      <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.4rem' }}>Address</p>
+                        <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.5 }}>
+                          {[app.address_line1, app.address_line2, app.city, app.state, app.zip, app.country].filter(Boolean).join(', ') || 'Not provided'}
+                        </p>
+                      </section>
+                    )}
 
-                <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
-                  {showHomeLifestyle && (
-                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
-                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Home & lifestyle</p>
-                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Home situation</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.home_situation || 'Not provided'}</p>
+                    {showPreferences && (
+                      <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Preferences</p>
+                        <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Gender</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.gender_preference || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Color</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.color_preference || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Registration</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333' }}>{app.registration_type || 'Not provided'}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Fence / containment</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.has_fence || 'Not provided'}</p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Indoor / outdoor</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.indoor_outdoor || 'Not provided'}</p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Vet info</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.vet_info || 'Not provided'}</p>
-                        </div>
-                      </div>
-                    </section>
-                  )}
+                      </section>
+                    )}
+                  </div>
 
-                  {showQuestions && (
-                    <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
-                      <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Questions</p>
-                      <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Training goals</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.training_goals || 'Not provided'}</p>
+                  <div style={{ display: 'grid', gap: density === 'compact' ? '0.45rem' : '0.65rem' }}>
+                    {showHomeLifestyle && (
+                      <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Home & lifestyle</p>
+                        <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Home situation</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.home_situation || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Fence / containment</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.has_fence || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Indoor / outdoor</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.indoor_outdoor || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Vet info</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.vet_info || 'Not provided'}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>How they found us</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.how_found || 'Not provided'}</p>
+                      </section>
+                    )}
+
+                    {showQuestions && (
+                      <section style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: '12px', padding: density === 'compact' ? '0.65rem' : '0.8rem' }}>
+                        <p style={{ fontSize: '0.75rem', fontWeight: 700, color: '#8a6d1f', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.55rem' }}>Questions</p>
+                        <div style={{ display: 'grid', gap: density === 'compact' ? '0.35rem' : '0.5rem' }}>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Training goals</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.training_goals || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>How they found us</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.how_found || 'Not provided'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Purchase agreement</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.purchase_agreement_questions || 'None'}</p>
+                          </div>
+                          <div>
+                            <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Other questions</p>
+                            <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.other_questions || 'None'}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Purchase agreement</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.purchase_agreement_questions || 'None'}</p>
-                        </div>
-                        <div>
-                          <p style={{ fontSize: '0.76rem', color: '#888', marginBottom: '0.12rem' }}>Other questions</p>
-                          <p style={{ fontSize: '0.9rem', color: '#333', lineHeight: 1.45 }}>{app.other_questions || 'None'}</p>
-                        </div>
-                      </div>
-                    </section>
-                  )}
+                      </section>
+                    )}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </details>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function UsersTab() {
+  const [users, setUsers] = useState([])
+  const [litters, setLitters] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [success, setSuccess] = useState('')
+  const [query, setQuery] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+
+  const [editingUserEmail, setEditingUserEmail] = useState(null)
+  const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', role: 'client' })
+  const [savingUser, setSavingUser] = useState(false)
+
+  const [addingUser, setAddingUser] = useState(false)
+  const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
+  const [addingSaving, setAddingSaving] = useState(false)
+
+  const [selectedLitterByUser, setSelectedLitterByUser] = useState({})
+  const [addingWaitlistEmail, setAddingWaitlistEmail] = useState(null)
+
+  useEffect(() => {
+    fetchUsersAndLitters()
+  }, [])
+
+  async function fetchUsersAndLitters() {
+    setLoading(true)
+    setError('')
+    const [{ data: waitlistData }, { data: appsData }, { data: profilesData }, { data: littersData }] = await Promise.all([
+      supabase.from('waitlist').select('*, puppies(name)').order('position'),
+      supabase.from('applications').select('*').order('created_at', { ascending: false }),
+      supabase.from('profiles').select('*'),
+      supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+    ])
+
+    setLitters(littersData || [])
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const currentUser = sessionData?.session?.user
+
+    const userMap = new Map()
+
+    // 1. Current logged-in user
+    if (currentUser?.email) {
+      const email = currentUser.email.toLowerCase()
+      userMap.set(email, {
+        email,
+        name: currentUser.user_metadata?.name || 'Admin',
+        phone: '',
+        role: 'admin',
+        profile_id: currentUser.id,
+        waitlist_entries: [],
+        applications: []
+      })
+    }
+
+    // 2. Applications
+    for (const app of appsData || []) {
+      const email = (app.email || '').trim().toLowerCase()
+      if (!email) continue
+      const fullName = [app.first_name, app.last_name].filter(Boolean).join(' ').trim() || 'Applicant'
+      let u = userMap.get(email)
+      if (!u) {
+        u = {
+          email,
+          name: fullName,
+          phone: app.phone || '',
+          role: 'client',
+          profile_id: null,
+          waitlist_entries: [],
+          applications: []
+        }
+        userMap.set(email, u)
+      }
+      if (!u.name || u.name === 'Admin' || u.name === 'Applicant') u.name = fullName
+      if (!u.phone && app.phone) u.phone = app.phone
+      u.applications.push(app)
+    }
+
+    // 3. Waitlist
+    for (const w of waitlistData || []) {
+      const email = (w.email || '').trim().toLowerCase()
+      if (!email) continue
+      let u = userMap.get(email)
+      if (!u) {
+        u = {
+          email,
+          name: w.name || 'Waitlist Client',
+          phone: w.phone || '',
+          role: 'client',
+          profile_id: null,
+          waitlist_entries: [],
+          applications: []
+        }
+        userMap.set(email, u)
+      }
+      if (!u.name || u.name === 'Waitlist Client') u.name = w.name
+      if (!u.phone && w.phone) u.phone = w.phone
+      u.waitlist_entries.push(w)
+    }
+
+    // 4. Profiles
+    if (profilesData && profilesData.length > 0) {
+      const profileRoleMap = new Map(profilesData.map(p => [p.id, p.role]))
+      if (currentUser?.id && profileRoleMap.has(currentUser.id)) {
+        const u = userMap.get(currentUser.email.toLowerCase())
+        if (u) u.role = profileRoleMap.get(currentUser.id) || 'admin'
+      }
+    }
+
+    setUsers(Array.from(userMap.values()))
+    setLoading(false)
+  }
+
+  function generateTemporaryPassword() {
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
+    let out = ''
+    for (let i = 0; i < 12; i += 1) {
+      out += alphabet[Math.floor(Math.random() * alphabet.length)]
+    }
+    return out
+  }
+
+  async function handleAddToWaitlist(user, litterId) {
+    if (!litterId) {
+      setError('Select a litter before adding this user to the waitlist.')
+      return
+    }
+    setError('')
+    setSuccess('')
+    setAddingWaitlistEmail(user.email)
+
+    try {
+      const email = user.email.toLowerCase()
+      const fullName = user.name || 'New Client'
+      const phone = user.phone || ''
+
+      const byLitter = await supabase
+        .from('waitlist')
+        .select('position')
+        .eq('litter_id', litterId)
+        .order('position', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      const nextPosition = Number(byLitter.data?.position || 0) + 1
+
+      const { error: insertError } = await supabase.from('waitlist').insert({
+        name: fullName,
+        email,
+        phone,
+        position: nextPosition,
+        litter_id: litterId,
+        notes: 'Added from Users tab'
+      })
+
+      if (insertError) throw new Error(insertError.message)
+
+      const tempPassword = generateTemporaryPassword()
+      await callFunction('create-client-user', { email, password: tempPassword, name: fullName, phone, role: user.role || 'client' })
+      await callFunction('send-client-portal-credentials', { clientName: fullName, clientEmail: email, password: tempPassword, portalUrl: PORTAL_URL })
+
+      setSuccess(`Added ${fullName} to waitlist and sent portal credentials!`)
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Failed to add user to waitlist')
+    }
+    setAddingWaitlistEmail(null)
+  }
+
+  function startEditUser(u) {
+    setEditingUserEmail(u.email)
+    setEditForm({
+      name: u.name || '',
+      email: u.email || '',
+      phone: u.phone || '',
+      role: u.role || 'client'
+    })
+  }
+
+  async function handleSaveUserEdit(oldEmail) {
+    setSavingUser(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const newEmail = editForm.email.trim().toLowerCase()
+      const newPhone = editForm.phone.trim()
+      const newName = editForm.name.trim()
+      const newRole = editForm.role
+
+      await supabase
+        .from('waitlist')
+        .update({ name: newName, email: newEmail, phone: newPhone })
+        .ilike('email', oldEmail)
+
+      const nameParts = newName.split(' ')
+      const firstName = nameParts[0] || newName
+      const lastName = nameParts.slice(1).join(' ') || ''
+      await supabase
+        .from('applications')
+        .update({ first_name: firstName, last_name: lastName, email: newEmail, phone: newPhone })
+        .ilike('email', oldEmail)
+
+      await callFunction('create-client-user', { email: newEmail, name: newName, phone: newPhone, role: newRole })
+
+      setSuccess(`Updated user ${newName}.`)
+      setEditingUserEmail(null)
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Failed to update user')
+    }
+    setSavingUser(false)
+  }
+
+  async function handleDeleteUser(u) {
+    if (!confirm(`Delete user ${u.name} (${u.email}) and all associated waitlist entries, applications, and portal credentials? This cannot be undone.`)) return
+
+    setError('')
+    setSuccess('')
+    try {
+      await callFunction('delete-client-user', { email: u.email })
+      setSuccess(`Deleted user ${u.name}.`)
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Unable to delete user')
+    }
+  }
+
+  async function handleCreateNewUser() {
+    if (!addForm.email || !addForm.password) {
+      setError('Email and password are required.')
+      return
+    }
+    setAddingSaving(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      const email = addForm.email.trim().toLowerCase()
+      const name = addForm.name.trim() || 'New User'
+      const phone = addForm.phone.trim()
+      const role = addForm.role || 'client'
+
+      await callFunction('create-client-user', {
+        email,
+        password: addForm.password,
+        name,
+        phone,
+        role
+      })
+
+      if (addForm.litter_id) {
+        const byLitter = await supabase
+          .from('waitlist')
+          .select('position')
+          .eq('litter_id', addForm.litter_id)
+          .order('position', { ascending: false })
+          .limit(1)
+          .maybeSingle()
+        const nextPos = Number(byLitter.data?.position || 0) + 1
+
+        await supabase.from('waitlist').insert({
+          name,
+          email,
+          phone,
+          position: nextPos,
+          litter_id: addForm.litter_id,
+          notes: 'Added upon user creation'
+        })
+
+        await callFunction('send-client-portal-credentials', {
+          clientName: name,
+          clientEmail: email,
+          password: addForm.password,
+          portalUrl: PORTAL_URL
+        })
+      }
+
+      setSuccess(`User ${name} created successfully!`)
+      setAddingUser(false)
+      setAddForm({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Failed to create user')
+    }
+    setAddingSaving(false)
+  }
+
+  const filteredUsers = useMemo(() => {
+    let list = [...users]
+    const q = query.trim().toLowerCase()
+    if (roleFilter !== 'all') {
+      list = list.filter(u => u.role === roleFilter)
+    }
+    if (q) {
+      list = list.filter(u =>
+        (u.name || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
+        (u.phone || '').toLowerCase().includes(q)
+      )
+    }
+    return list
+  }, [users, query, roleFilter])
+
+  if (loading) return <p style={{ color: '#888' }}>Loading users...</p>
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h3 style={{ fontWeight: 600, fontSize: '1.2rem' }}>Users</h3>
+          <p style={{ fontSize: '0.85rem', color: '#666' }}>Manage user accounts, roles, contact info, waitlist assignments, and communication.</p>
+        </div>
+        <button onClick={() => setAddingUser(!addingUser)} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>
+          {addingUser ? 'Cancel Add User' : '+ Add User'}
+        </button>
+      </div>
+
+      {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+      {success && <p style={{ color: '#1f7a35', marginBottom: '1rem' }}>{success}</p>}
+
+      {addingUser && (
+        <div style={{ background: '#f5f5f3', border: '1px solid #e0e0e0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+          <h4 style={{ fontWeight: 600, marginBottom: '1rem' }}>Add New User</h4>
+          <FormGrid>
+            <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Name</label><input style={inputStyle} value={addForm.name} onChange={e => setAddForm({ ...addForm, name: e.target.value })} placeholder="Full name" /></div>
+            <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Email (required)</label><input type="email" style={inputStyle} value={addForm.email} onChange={e => setAddForm({ ...addForm, email: e.target.value })} placeholder="user@example.com" /></div>
+            <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Phone</label><input style={inputStyle} value={addForm.phone} onChange={e => setAddForm({ ...addForm, phone: e.target.value })} placeholder="555-123-4567" /></div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: '#666' }}>Role</label>
+              <select style={inputStyle} value={addForm.role} onChange={e => setAddForm({ ...addForm, role: e.target.value })}>
+                <option value="client">Client</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Password (required)</label><input type="password" style={inputStyle} value={addForm.password} onChange={e => setAddForm({ ...addForm, password: e.target.value })} placeholder="Set portal password" /></div>
+            <div>
+              <label style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist Litter (optional)</label>
+              <select style={inputStyle} value={addForm.litter_id} onChange={e => setAddForm({ ...addForm, litter_id: e.target.value })}>
+                <option value="">Do not add to waitlist</option>
+                {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </div>
+          </FormGrid>
+          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
+            <button onClick={handleCreateNewUser} disabled={addingSaving} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', flex: 1, padding: '0.75rem' }}>
+              {addingSaving ? 'Creating...' : 'Create User'}
+            </button>
+            <button onClick={() => setAddingUser(false)} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', flex: 1, padding: '0.75rem' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1.25rem', flexWrap: 'wrap' }}>
+        <input
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search by name, email, phone..."
+          style={{ ...inputStyle, maxWidth: '300px' }}
+        />
+        <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} style={{ ...inputStyle, maxWidth: '160px' }}>
+          <option value="all">All Roles</option>
+          <option value="client">Client</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+
+      {filteredUsers.length === 0 && <p style={{ color: '#888' }}>No users found.</p>}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {filteredUsers.map(u => (
+          <div key={u.email} style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '12px', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem' }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <p style={{ fontWeight: 700, fontSize: '1.05rem' }}>{u.name}</p>
+                  <span style={{ fontSize: '0.72rem', fontWeight: 600, padding: '0.2rem 0.55rem', borderRadius: '20px', background: u.role === 'admin' ? '#1a1a1a' : '#f0f0f0', color: u.role === 'admin' ? '#fff' : '#555', textTransform: 'capitalize' }}>
+                    {u.role}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.85rem', color: '#666', marginTop: '0.15rem' }}>{u.email}{u.phone ? ` • ${u.phone}` : ''}</p>
+                {u.waitlist_entries.length > 0 && (
+                  <p style={{ fontSize: '0.8rem', color: '#2d7a3a', marginTop: '0.25rem' }}>
+                    Waitlist: {u.waitlist_entries.map(w => `#${w.position}`).join(', ')}
+                  </p>
+                )}
+                {u.applications.length > 0 && (
+                  <p style={{ fontSize: '0.8rem', color: '#5555cc', marginTop: '0.15rem' }}>
+                    {u.applications.length} Application(s) submitted
+                  </p>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                {u.phone && (
+                  <a href={`tel:${u.phone}`} style={{ ...btnStyle, background: '#f8f8f8', border: '1px solid #ddd', color: '#333', fontSize: '0.8rem', textDecoration: 'none', padding: '0.35rem 0.7rem' }}>
+                    Call
+                  </a>
+                )}
+                {u.email && (
+                  <a href={`mailto:${u.email}`} style={{ ...btnStyle, background: '#f8f8f8', border: '1px solid #ddd', color: '#333', fontSize: '0.8rem', textDecoration: 'none', padding: '0.35rem 0.7rem' }}>
+                    Email
+                  </a>
+                )}
+                <button onClick={() => startEditUser(u)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
+                  Edit Info / Role
+                </button>
+                <button onClick={() => handleDeleteUser(u)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', border: '1px solid #fcc', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
+                  Delete User
+                </button>
+              </div>
+            </div>
+
+            {/* Add to waitlist inline section */}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+              <span style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist:</span>
+              <select
+                value={selectedLitterByUser[u.email] || ''}
+                onChange={e => setSelectedLitterByUser({ ...selectedLitterByUser, [u.email]: e.target.value })}
+                style={{ ...inputStyle, fontSize: '0.8rem', maxWidth: '200px', padding: '0.35rem 0.5rem' }}
+              >
+                <option value="">Select litter...</option>
+                {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+              <button
+                onClick={() => handleAddToWaitlist(u, selectedLitterByUser[u.email])}
+                disabled={addingWaitlistEmail === u.email || !selectedLitterByUser[u.email]}
+                style={{ ...btnStyle, background: '#e7f1ff', color: '#084298', border: '1px solid #b8d3ff', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+              >
+                {addingWaitlistEmail === u.email ? 'Adding...' : 'Add to Waitlist'}
+              </button>
+            </div>
+
+            {/* Editing mode for user contact info / role */}
+            {editingUserEmail === u.email && (
+              <div style={{ background: '#f5f5f3', border: '1px solid #ddd', borderRadius: '8px', padding: '0.85rem', display: 'grid', gap: '0.65rem' }}>
+                <h5 style={{ fontWeight: 600, fontSize: '0.9rem' }}>Edit Contact Info & Role</h5>
+                <FormGrid>
+                  <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Name</label><input style={inputStyle} value={editForm.name} onChange={e => setEditForm({ ...editForm, name: e.target.value })} /></div>
+                  <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Email</label><input style={inputStyle} value={editForm.email} onChange={e => setEditForm({ ...editForm, email: e.target.value })} /></div>
+                  <div><label style={{ fontSize: '0.78rem', color: '#666' }}>Phone</label><input style={inputStyle} value={editForm.phone} onChange={e => setEditForm({ ...editForm, phone: e.target.value })} /></div>
+                  <div>
+                    <label style={{ fontSize: '0.78rem', color: '#666' }}>Role</label>
+                    <select style={inputStyle} value={editForm.role} onChange={e => setEditForm({ ...editForm, role: e.target.value })}>
+                      <option value="client">Client</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                </FormGrid>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.35rem' }}>
+                  <button onClick={() => handleSaveUserEdit(u.email)} disabled={savingUser} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', fontSize: '0.85rem', padding: '0.5rem 1rem' }}>
+                    {savingUser ? 'Saving...' : 'Save User Changes'}
+                  </button>
+                  <button onClick={() => setEditingUserEmail(null)} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', fontSize: '0.85rem', padding: '0.5rem 0.85rem' }}>Cancel</button>
+                </div>
+              </div>
+            )}
+          </div>
         ))}
       </div>
     </div>
@@ -2259,6 +2614,35 @@ function EmailTab() {
     setSending(false)
   }
 
+  async function handleDeleteThread(threadId) {
+    if (!confirm('Delete this entire email thread? This cannot be undone.')) return
+    const { error: deleteError } = await supabase
+      .from('emails')
+      .delete()
+      .eq('thread_id', threadId)
+
+    if (deleteError) {
+      setError(deleteError.message || 'Unable to delete thread')
+    } else {
+      setEmails(current => current.filter(e => e.thread_id !== threadId))
+      setSelectedThreadId(null)
+    }
+  }
+
+  async function handleDeleteMessage(messageId) {
+    if (!confirm('Delete this email message?')) return
+    const { error: deleteError } = await supabase
+      .from('emails')
+      .delete()
+      .eq('id', messageId)
+
+    if (deleteError) {
+      setError(deleteError.message || 'Unable to delete message')
+    } else {
+      setEmails(current => current.filter(e => e.id !== messageId))
+    }
+  }
+
   if (loading) return <p style={{ color: '#888' }}>Loading email...</p>
 
   return (
@@ -2300,13 +2684,31 @@ function EmailTab() {
 
         {selectedThread && (
           <div style={{ flex: '2 1 400px', minWidth: '300px', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+              <h5 style={{ fontWeight: 600, fontSize: '0.95rem' }}>Thread Messages</h5>
+              <button
+                onClick={() => handleDeleteThread(selectedThread.threadId)}
+                style={{ ...btnStyle, background: '#fff0f0', color: '#c00', border: '1px solid #fcc', fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
+              >
+                Delete Thread
+              </button>
+            </div>
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '340px', overflowY: 'auto', marginBottom: '1rem' }}>
               {selectedThread.messages.map(message => (
                 <div key={message.id} style={{ background: message.direction === 'inbound' ? '#f7f7f7' : '#eef4ff', borderRadius: '8px', padding: '0.65rem 0.75rem' }}>
-                  <p style={{ fontSize: '0.8rem', color: '#555', marginBottom: '0.3rem' }}>
-                    <strong>{message.direction === 'inbound' ? message.from_email : `You → ${message.to_email}`}</strong>
-                    {' · '}{new Date(message.created_at).toLocaleString()}
-                  </p>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                    <p style={{ fontSize: '0.8rem', color: '#555', margin: 0 }}>
+                      <strong>{message.direction === 'inbound' ? message.from_email : `You → ${message.to_email}`}</strong>
+                      {' · '}{new Date(message.created_at).toLocaleString()}
+                    </p>
+                    <button
+                      onClick={() => handleDeleteMessage(message.id)}
+                      style={{ ...btnStyle, background: 'none', color: '#c00', border: 'none', fontSize: '0.75rem', padding: '0 0.25rem', cursor: 'pointer' }}
+                    >
+                      Delete
+                    </button>
+                  </div>
                   {message.html_body
                     ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.html_body) }} />
                     : <p style={{ whiteSpace: 'pre-wrap' }}>{message.text_body}</p>}
@@ -2431,7 +2833,7 @@ function SettingsTab() {
 // ── ADMIN DASHBOARD SHELL ──
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'settings']
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'users', 'settings']
 
   return (
     <div>
@@ -2450,6 +2852,7 @@ function AdminDashboard() {
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
       {tab === 'applications' && <ApplicationsTab />}
+      {tab === 'users' && <UsersTab />}
       {tab === 'settings' && <SettingsTab />}
     </div>
   )

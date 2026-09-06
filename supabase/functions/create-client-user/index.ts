@@ -12,10 +12,10 @@ serve(async (req) => {
   }
 
   try {
-    const { email, password, name } = await req.json()
+    const { email, password, name, phone, role } = await req.json()
 
-    if (!email || !password) {
-      return new Response(JSON.stringify({ error: 'email and password are required' }), {
+    if (!email) {
+      return new Response(JSON.stringify({ error: 'email is required' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
@@ -27,30 +27,71 @@ serve(async (req) => {
     )
 
     const normalizedEmail = String(email).trim().toLowerCase()
+    let userId: string | undefined
+    let created = false
 
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: normalizedEmail,
-      password,
-      email_confirm: true,
-      app_metadata: {
-        must_change_password: true
-      }
-    })
+    if (password) {
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true,
+        user_metadata: name || phone ? { name, phone } : undefined,
+        app_metadata: {
+          must_change_password: true
+        }
+      })
 
-    let userId = data?.user?.id
-    let created = true
+      userId = data?.user?.id
+      created = true
 
-    if (error) {
-      const message = (error.message || '').toLowerCase()
-      const mayExist = message.includes('already') || message.includes('registered') || message.includes('exists')
+      if (error) {
+        const message = (error.message || '').toLowerCase()
+        const mayExist = message.includes('already') || message.includes('registered') || message.includes('exists')
 
-      if (!mayExist) {
-        return new Response(JSON.stringify({ error: error.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        if (!mayExist) {
+          return new Response(JSON.stringify({ error: error.message }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        const { data: listedUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
+        if (listError) {
+          return new Response(JSON.stringify({ error: listError.message }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        const existing = (listedUsers?.users || []).find((u) => (u.email || '').toLowerCase() === normalizedEmail)
+        if (!existing?.id) {
+          return new Response(JSON.stringify({ error: 'User exists but could not be resolved by email.' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
+          password,
+          email_confirm: true,
+          user_metadata: name || phone ? { ...existing.user_metadata, name: name || existing.user_metadata?.name, phone: phone || existing.user_metadata?.phone } : undefined,
+          app_metadata: {
+            must_change_password: true
+          }
         })
-      }
 
+        if (updateError) {
+          return new Response(JSON.stringify({ error: updateError.message }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        userId = updatedUser?.user?.id || existing.id
+        created = false
+      }
+    } else {
+      // Find existing user by email
       const { data: listedUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
       if (listError) {
         return new Response(JSON.stringify({ error: listError.message }), {
@@ -60,40 +101,15 @@ serve(async (req) => {
       }
 
       const existing = (listedUsers?.users || []).find((u) => (u.email || '').toLowerCase() === normalizedEmail)
-      if (!existing?.id) {
-        return new Response(JSON.stringify({ error: 'User exists but could not be resolved by email.' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+      if (existing?.id) {
+        userId = existing.id
       }
-
-      const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
-        password,
-        email_confirm: true,
-        app_metadata: {
-          must_change_password: true
-        }
-      })
-
-      if (updateError) {
-        return new Response(JSON.stringify({ error: updateError.message }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
-      }
-
-      userId = updatedUser?.user?.id || existing.id
-      created = false
     }
 
-    if (!userId) {
-      return new Response(JSON.stringify({ error: 'Could not determine user id after user provisioning.' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    if (userId) {
+      const assignedRole = role === 'admin' ? 'admin' : 'client'
+      await supabase.from('profiles').upsert({ id: userId, role: assignedRole })
     }
-
-    await supabase.from('profiles').upsert({ id: userId, role: 'client' })
 
     return new Response(JSON.stringify({ ok: true, userId, created }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
