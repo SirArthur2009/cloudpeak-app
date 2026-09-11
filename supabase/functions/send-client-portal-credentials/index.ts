@@ -1,4 +1,5 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -79,6 +80,23 @@ serve(async (req) => {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
+    }
+
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')
+    const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+    if (supabaseUrl && serviceRoleKey) {
+      const adminClient = createClient(supabaseUrl, serviceRoleKey)
+      const { error: insertError } = await adminClient.from('emails').insert({
+        direction: 'outbound',
+        resend_id: data?.id ?? null,
+        from_email: fromEmail,
+        to_email: clientEmail,
+        subject,
+        text_body: null,
+        html_body: null,
+        is_read: true
+      })
+      if (insertError) console.error('Could not record outbound email:', insertError.message)
     }
 
     return new Response(JSON.stringify({ ok: true, data }), {

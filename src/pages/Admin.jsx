@@ -1253,6 +1253,12 @@ function WaitlistTab() {
           migrationWarning += ` (Note on account setup: ${authErr.message || 'Check Users tab'})`
         }
 
+        await supabase
+          .from('applications')
+          .update({ status: 'reviewed' })
+          .eq('email', email)
+          .or('status.is.null,status.eq.new')
+
         const nextLitterId = String(form.litter_id)
         setMessage(migrationWarning || `Added ${fullName} to waitlist and emailed credentials!`)
         setEditing(null)
@@ -2229,6 +2235,12 @@ function UsersTab() {
 
       if (insertError) throw new Error(insertError.message)
 
+      await supabase
+        .from('applications')
+        .update({ status: 'reviewed' })
+        .eq('email', email)
+        .or('status.is.null,status.eq.new')
+
       const tempPassword = generateTemporaryPassword()
       await callFunction('create-client-user', { email, password: tempPassword, name: fullName, phone, role: user.role || 'client', must_change_password: true })
       await callFunction('send-client-portal-credentials', { clientName: fullName, clientEmail: email, password: tempPassword, portalUrl: PORTAL_URL, mustChangePassword: true })
@@ -2602,25 +2614,27 @@ function UsersTab() {
               </div>
             </div>
 
-            {/* Add to waitlist inline section */}
-            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
-              <span style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist:</span>
-              <select
-                value={selectedLitterByUser[u.email] || ''}
-                onChange={e => setSelectedLitterByUser({ ...selectedLitterByUser, [u.email]: e.target.value })}
-                style={{ ...inputStyle, fontSize: '0.8rem', maxWidth: '200px', padding: '0.35rem 0.5rem' }}
-              >
-                <option value="">Select litter...</option>
-                {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
-              </select>
-              <button
-                onClick={() => handleAddToWaitlist(u, selectedLitterByUser[u.email])}
-                disabled={addingWaitlistEmail === u.email || !selectedLitterByUser[u.email]}
-                style={{ ...btnStyle, background: '#e7f1ff', color: '#084298', border: '1px solid #b8d3ff', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
-              >
-                {addingWaitlistEmail === u.email ? 'Adding...' : 'Add to Waitlist'}
-              </button>
-            </div>
+            {/* Add to waitlist inline section (only show if not already on any waitlist) */}
+            {u.waitlist_entries.length === 0 && (
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
+                <span style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist:</span>
+                <select
+                  value={selectedLitterByUser[u.email] || ''}
+                  onChange={e => setSelectedLitterByUser({ ...selectedLitterByUser, [u.email]: e.target.value })}
+                  style={{ ...inputStyle, fontSize: '0.8rem', maxWidth: '200px', padding: '0.35rem 0.5rem' }}
+                >
+                  <option value="">Select litter...</option>
+                  {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+                </select>
+                <button
+                  onClick={() => handleAddToWaitlist(u, selectedLitterByUser[u.email])}
+                  disabled={addingWaitlistEmail === u.email || !selectedLitterByUser[u.email]}
+                  style={{ ...btnStyle, background: '#e7f1ff', color: '#084298', border: '1px solid #b8d3ff', fontSize: '0.8rem', padding: '0.35rem 0.75rem' }}
+                >
+                  {addingWaitlistEmail === u.email ? 'Adding...' : 'Add to Waitlist'}
+                </button>
+              </div>
+            )}
 
             {/* Change Password panel */}
             {passwordUserEmail === u.email && (
@@ -2794,20 +2808,26 @@ function ArchivedApplicationsTab() {
 
 function EmailTab() {
   const [emails, setEmails] = useState([])
+  const [contactsMap, setContactsMap] = useState(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedThreadId, setSelectedThreadId] = useState(null)
   const [replyMessage, setReplyMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+  const [viewFilter, setViewFilter] = useState('inbox') // 'inbox' or 'archived'
 
   async function fetchEmails() {
     setLoading(true)
     setError('')
-    const { data, error: fetchError } = await supabase
-      .from('emails')
-      .select('id, thread_id, direction, from_email, to_email, subject, text_body, html_body, is_read, created_at')
-      .order('created_at', { ascending: true })
+    const [{ data, error: fetchError }, { data: appsData }, { data: waitlistData }] = await Promise.all([
+      supabase
+        .from('emails')
+        .select('*')
+        .order('created_at', { ascending: true }),
+      supabase.from('applications').select('first_name, last_name, email'),
+      supabase.from('waitlist').select('name, email')
+    ])
 
     if (fetchError) {
       setError(fetchError.message || 'Unable to load emails')
@@ -2815,14 +2835,36 @@ function EmailTab() {
     } else {
       setEmails(data || [])
     }
+
+    // Build contacts map to match emails with names
+    const names = new Map()
+    for (const app of appsData || []) {
+      const email = (app.email || '').trim().toLowerCase()
+      if (!email) continue
+      const fullName = [app.first_name, app.last_name].filter(Boolean).join(' ').trim()
+      if (fullName && !names.has(email)) names.set(email, fullName)
+    }
+    for (const w of waitlistData || []) {
+      const email = (w.email || '').trim().toLowerCase()
+      if (!email) continue
+      const name = (w.name || '').trim()
+      if (name && !names.has(email)) names.set(email, name)
+    }
+    setContactsMap(names)
     setLoading(false)
+  }
+
+  function getDisplayName(email) {
+    if (!email) return ''
+    const clean = email.trim().toLowerCase()
+    return contactsMap.get(clean) || null
   }
 
   useEffect(() => {
     fetchEmails()
   }, [])
 
-  const threads = useMemo(() => {
+  const allThreads = useMemo(() => {
     const byThread = new Map()
     for (const email of emails) {
       const list = byThread.get(email.thread_id) || []
@@ -2830,16 +2872,27 @@ function EmailTab() {
       byThread.set(email.thread_id, list)
     }
     return Array.from(byThread.entries())
-      .map(([threadId, list]) => ({
-        threadId,
-        messages: list,
-        latest: list[list.length - 1],
-        unreadCount: list.filter(m => m.direction === 'inbound' && !m.is_read).length,
-      }))
+      .map(([threadId, list]) => {
+        const isArchived = list.some(m => Boolean(m.is_archived))
+        return {
+          threadId,
+          messages: list,
+          latest: list[list.length - 1],
+          isArchived,
+          unreadCount: list.filter(m => m.direction === 'inbound' && !m.is_read).length,
+        }
+      })
       .sort((a, b) => new Date(b.latest.created_at) - new Date(a.latest.created_at))
   }, [emails])
 
-  const selectedThread = threads.find(t => t.threadId === selectedThreadId) || null
+  const threads = useMemo(() => {
+    if (viewFilter === 'archived') {
+      return allThreads.filter(t => t.isArchived)
+    }
+    return allThreads.filter(t => !t.isArchived)
+  }, [allThreads, viewFilter])
+
+  const selectedThread = allThreads.find(t => t.threadId === selectedThreadId) || null
 
   async function selectThread(thread) {
     setSelectedThreadId(thread.threadId)
@@ -2880,36 +2933,26 @@ function EmailTab() {
     setSending(false)
   }
 
-  async function handleDeleteThread(threadId) {
-    if (!confirm('Delete this entire email thread? This cannot be undone.')) return
-    const { error: deleteError } = await supabase
+  async function handleArchiveThread(threadId, shouldArchive = true) {
+    const { error: updateError } = await supabase
       .from('emails')
-      .delete()
+      .update({ is_archived: shouldArchive })
       .eq('thread_id', threadId)
 
-    if (deleteError) {
-      setError(deleteError.message || 'Unable to delete thread')
+    if (updateError) {
+      setError(updateError.message || 'Unable to update thread')
     } else {
-      setEmails(current => current.filter(e => e.thread_id !== threadId))
-      setSelectedThreadId(null)
-    }
-  }
-
-  async function handleDeleteMessage(messageId) {
-    if (!confirm('Delete this email message?')) return
-    const { error: deleteError } = await supabase
-      .from('emails')
-      .delete()
-      .eq('id', messageId)
-
-    if (deleteError) {
-      setError(deleteError.message || 'Unable to delete message')
-    } else {
-      setEmails(current => current.filter(e => e.id !== messageId))
+      setEmails(current => current.map(e => e.thread_id === threadId ? { ...e, is_archived: shouldArchive } : e))
+      if (shouldArchive && viewFilter === 'inbox') {
+        setSelectedThreadId(null)
+      }
     }
   }
 
   if (loading) return <p style={{ color: '#888' }}>Loading email...</p>
+
+  const archivedCount = allThreads.filter(t => t.isArchived).length
+  const inboxCount = allThreads.filter(t => !t.isArchived).length
 
   return (
     <div>
@@ -2918,68 +2961,122 @@ function EmailTab() {
           <h4 style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Email</h4>
           <p style={{ fontSize: '0.85rem', color: '#666' }}>Messages received via cloudpeaksilverlabradors.com are also forwarded to cloudpeaksilverlabs@yahoo.com.</p>
         </div>
-        <button onClick={fetchEmails} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd' }}>Refresh</button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: '6px', overflow: 'hidden' }}>
+            <button
+              onClick={() => { setViewFilter('inbox'); setSelectedThreadId(null) }}
+              style={{
+                padding: '0.35rem 0.75rem',
+                border: 'none',
+                background: viewFilter === 'inbox' ? '#1a1a1a' : '#fff',
+                color: viewFilter === 'inbox' ? '#fff' : '#333',
+                fontSize: '0.85rem',
+                cursor: 'pointer'
+              }}
+            >
+              Inbox ({inboxCount})
+            </button>
+            <button
+              onClick={() => { setViewFilter('archived'); setSelectedThreadId(null) }}
+              style={{
+                padding: '0.35rem 0.75rem',
+                border: 'none',
+                borderLeft: '1px solid #ddd',
+                background: viewFilter === 'archived' ? '#1a1a1a' : '#fff',
+                color: viewFilter === 'archived' ? '#fff' : '#333',
+                fontSize: '0.85rem',
+                cursor: 'pointer'
+              }}
+            >
+              Archived ({archivedCount})
+            </button>
+          </div>
+          <button onClick={fetchEmails} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd' }}>Refresh</button>
+        </div>
       </div>
       {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
-      {!error && threads.length === 0 && <p style={{ color: '#888' }}>No email yet.</p>}
+      {!error && threads.length === 0 && <p style={{ color: '#888' }}>{viewFilter === 'archived' ? 'No archived emails.' : 'No email in inbox.'}</p>}
 
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
         <div style={{ flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
-          {threads.map(thread => (
-            <button
-              key={thread.threadId}
-              onClick={() => selectThread(thread)}
-              style={{
-                textAlign: 'left',
-                padding: '0.65rem 0.75rem',
-                borderRadius: '8px',
-                border: thread.threadId === selectedThreadId ? '1px solid #1a1a1a' : '1px solid #ddd',
-                background: thread.threadId === selectedThreadId ? '#f3f3f3' : '#fff',
-                cursor: 'pointer',
-              }}
-            >
-              <p style={{ fontWeight: thread.unreadCount > 0 ? 700 : 500, marginBottom: '0.2rem' }}>
-                {thread.latest.direction === 'inbound' ? thread.latest.from_email : thread.latest.to_email}
-                {thread.unreadCount > 0 && <span style={{ marginLeft: '0.4rem', color: '#c0392b' }}>({thread.unreadCount} new)</span>}
-              </p>
-              <p style={{ fontSize: '0.85rem', color: '#333', marginBottom: '0.15rem' }}>{thread.latest.subject || '(no subject)'}</p>
-              <p style={{ fontSize: '0.75rem', color: '#888' }}>{new Date(thread.latest.created_at).toLocaleString()}</p>
-            </button>
-          ))}
+          {threads.map(thread => {
+            const rawEmail = thread.latest.direction === 'inbound' ? thread.latest.from_email : thread.latest.to_email
+            const matchedName = getDisplayName(rawEmail)
+            return (
+              <button
+                key={thread.threadId}
+                onClick={() => selectThread(thread)}
+                style={{
+                  textAlign: 'left',
+                  padding: '0.65rem 0.75rem',
+                  borderRadius: '8px',
+                  border: thread.threadId === selectedThreadId ? '1px solid #1a1a1a' : '1px solid #ddd',
+                  background: thread.threadId === selectedThreadId ? '#f3f3f3' : '#fff',
+                  cursor: 'pointer',
+                }}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '0.2rem' }}>
+                  <p style={{ fontWeight: thread.unreadCount > 0 ? 700 : 600, margin: 0, fontSize: '0.95rem' }}>
+                    {matchedName ? `${matchedName}` : rawEmail}
+                    {thread.unreadCount > 0 && <span style={{ marginLeft: '0.4rem', color: '#c0392b' }}>({thread.unreadCount} new)</span>}
+                  </p>
+                </div>
+                {matchedName && (
+                  <p style={{ fontSize: '0.78rem', color: '#666', marginBottom: '0.2rem' }}>{rawEmail}</p>
+                )}
+                <p style={{ fontSize: '0.85rem', color: '#333', marginBottom: '0.15rem' }}>{thread.latest.subject || '(no subject)'}</p>
+                <p style={{ fontSize: '0.75rem', color: '#888', margin: 0 }}>{new Date(thread.latest.created_at).toLocaleString()}</p>
+              </button>
+            )
+          })}
         </div>
 
         {selectedThread && (
           <div style={{ flex: '2 1 400px', minWidth: '300px', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-              <h5 style={{ fontWeight: 600, fontSize: '0.95rem' }}>Thread Messages</h5>
-              <button
-                onClick={() => handleDeleteThread(selectedThread.threadId)}
-                style={{ ...btnStyle, background: '#fff0f0', color: '#c00', border: '1px solid #fcc', fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
-              >
-                Delete Thread
-              </button>
+              <h5 style={{ fontWeight: 600, fontSize: '0.95rem', margin: 0 }}>Thread Messages</h5>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                {selectedThread.isArchived ? (
+                  <button
+                    onClick={() => handleArchiveThread(selectedThread.threadId, false)}
+                    style={{ ...btnStyle, background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
+                  >
+                    Unarchive Thread
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => handleArchiveThread(selectedThread.threadId, true)}
+                    style={{ ...btnStyle, background: '#f5f5f3', color: '#333', border: '1px solid #ddd', fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}
+                  >
+                    Archive Thread
+                  </button>
+                )}
+              </div>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', maxHeight: '340px', overflowY: 'auto', marginBottom: '1rem' }}>
-              {selectedThread.messages.map(message => (
-                <div key={message.id} style={{ background: message.direction === 'inbound' ? '#f7f7f7' : '#eef4ff', borderRadius: '8px', padding: '0.65rem 0.75rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-                    <p style={{ fontSize: '0.8rem', color: '#555', margin: 0 }}>
-                      <strong>{message.direction === 'inbound' ? message.from_email : `You → ${message.to_email}`}</strong>
-                      {' · '}{new Date(message.created_at).toLocaleString()}
-                    </p>
-                    <button
-                      onClick={() => handleDeleteMessage(message.id)}
-                      style={{ ...btnStyle, background: 'none', color: '#c00', border: 'none', fontSize: '0.75rem', padding: '0 0.25rem', cursor: 'pointer' }}
-                    >
-                      Delete
-                    </button>
+              {selectedThread.messages.map(message => {
+                const isClient = message.direction === 'inbound'
+                const personEmail = isClient ? message.from_email : message.to_email
+                const personName = getDisplayName(personEmail)
+                const senderLabel = isClient
+                  ? (personName ? `${personName} <${message.from_email}>` : message.from_email)
+                  : (personName ? `You → ${personName} <${message.to_email}>` : `You → ${message.to_email}`)
+
+                return (
+                  <div key={message.id} style={{ background: isClient ? '#f7f7f7' : '#eef4ff', borderRadius: '8px', padding: '0.65rem 0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                      <p style={{ fontSize: '0.8rem', color: '#555', margin: 0 }}>
+                        <strong>{senderLabel}</strong>
+                        {' · '}{new Date(message.created_at).toLocaleString()}
+                      </p>
+                    </div>
+                    {message.html_body
+                      ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.html_body) }} />
+                      : <p style={{ whiteSpace: 'pre-wrap' }}>{message.text_body}</p>}
                   </div>
-                  {message.html_body
-                    ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(message.html_body) }} />
-                    : <p style={{ whiteSpace: 'pre-wrap' }}>{message.text_body}</p>}
-                </div>
-              ))}
+                )
+              })}
             </div>
 
             {sendError && <p style={{ color: 'red', marginBottom: '0.5rem' }}>Error: {sendError}</p>}
@@ -3008,7 +3105,7 @@ function SettingsTab() {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const [failures, setFailures] = useState([])
-  const [settingsView, setSettingsView] = useState('tools')
+  const [settingsView, setSettingsView] = useState('email')
 
   async function handleResendAllApplications() {
     if (!confirm('Resend email notifications for all puppy applications?')) return
@@ -3032,17 +3129,17 @@ function SettingsTab() {
     <div>
       <h3 style={{ fontWeight: 600, marginBottom: '0.75rem' }}>Settings</h3>
       <p style={{ fontSize: '0.9rem', color: '#666', marginBottom: '1rem' }}>
-        Admin maintenance tools.
+        Admin communications and maintenance tools.
       </p>
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <button onClick={() => setSettingsView('tools')} style={{ ...btnStyle, background: settingsView === 'tools' ? '#1a1a1a' : '#fff', border: settingsView === 'tools' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'tools' ? '#fff' : '#333' }}>Tools</button>
         <button onClick={() => setSettingsView('email')} style={{ ...btnStyle, background: settingsView === 'email' ? '#1a1a1a' : '#fff', border: settingsView === 'email' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'email' ? '#fff' : '#333' }}>Email</button>
+        <button onClick={() => setSettingsView('tools')} style={{ ...btnStyle, background: settingsView === 'tools' ? '#1a1a1a' : '#fff', border: settingsView === 'tools' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'tools' ? '#fff' : '#333' }}>Tools</button>
         <button onClick={() => setSettingsView('archived-applications')} style={{ ...btnStyle, background: settingsView === 'archived-applications' ? '#1a1a1a' : '#fff', border: settingsView === 'archived-applications' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'archived-applications' ? '#fff' : '#333' }}>Archived Applications</button>
       </div>
 
-      {settingsView === 'archived-applications' && <ArchivedApplicationsTab />}
       {settingsView === 'email' && <EmailTab />}
+      {settingsView === 'archived-applications' && <ArchivedApplicationsTab />}
       {settingsView === 'tools' && <>
 
       {message && (

@@ -22,8 +22,8 @@ serve(async (req) => {
     const { data: users } = await supabase.auth.admin.listUsers()
     const adminEmails = (users?.users || []).filter(u => adminIds.includes(u.id)).map(u => u.email)
 
-    await Promise.all(adminEmails.map(email =>
-      fetch('https://api.resend.com/emails', {
+    await Promise.all(adminEmails.map(async (email) => {
+      const res = await fetch('https://api.resend.com/emails', {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${Deno.env.get('RESEND_API_KEY')}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -33,7 +33,21 @@ serve(async (req) => {
           html: `<h2>New Reservation Request</h2><p><strong>${clientName}</strong> has selected <strong>${puppyName}</strong>.</p><p>Log in to your admin dashboard to approve.</p>`
         })
       })
-    ))
+      const data = await res.json().catch(() => ({}))
+      if (res.ok) {
+        const { error: insertError } = await supabase.from('emails').insert({
+          direction: 'outbound',
+          resend_id: data?.id ?? null,
+          from_email: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+          to_email: email,
+          subject: `Reservation Request: ${clientName} wants ${puppyName}`,
+          text_body: null,
+          html_body: null,
+          is_read: true
+        })
+        if (insertError) console.error('Could not record outbound email:', insertError.message)
+      }
+    }))
 
     return new Response(JSON.stringify({ ok: true }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
   } catch (err) {
