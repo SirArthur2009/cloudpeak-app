@@ -12,7 +12,7 @@ serve(async (req) => {
   }
 
   try {
-    const { email, password, name, phone, role } = await req.json()
+    const { email, password, name, phone, role, must_change_password } = await req.json()
 
     if (!email) {
       return new Response(JSON.stringify({ error: 'email is required' }), {
@@ -30,80 +30,79 @@ serve(async (req) => {
     let userId: string | undefined
     let created = false
 
-    if (password) {
+    const shouldMustChange = typeof must_change_password === 'boolean'
+      ? must_change_password
+      : Boolean(password)
+
+    // Check if user already exists in auth
+    const { data: listedUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
+    if (listError) {
+      return new Response(JSON.stringify({ error: listError.message }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    const existing = (listedUsers?.users || []).find((u) => (u.email || '').toLowerCase() === normalizedEmail)
+
+    if (existing?.id) {
+      userId = existing.id
+      const updatePayload: Record<string, any> = {
+        email_confirm: true,
+      }
+      if (password) {
+        updatePayload.password = password
+      }
+      if (name || phone || existing.user_metadata) {
+        updatePayload.user_metadata = {
+          ...existing.user_metadata,
+          ...(name ? { name } : {}),
+          ...(phone ? { phone } : {})
+        }
+      }
+      if (typeof must_change_password === 'boolean' || password) {
+        updatePayload.app_metadata = {
+          ...existing.app_metadata,
+          must_change_password: shouldMustChange
+        }
+      }
+
+      const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, updatePayload)
+      if (updateError) {
+        return new Response(JSON.stringify({ error: updateError.message }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      userId = updatedUser?.user?.id || existing.id
+      created = false
+    } else {
+      if (!password) {
+        return new Response(JSON.stringify({ error: 'Password is required to create a new user account.' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
       const { data, error } = await supabase.auth.admin.createUser({
         email: normalizedEmail,
         password,
         email_confirm: true,
         user_metadata: name || phone ? { name, phone } : undefined,
         app_metadata: {
-          must_change_password: true
+          must_change_password: shouldMustChange
         }
       })
 
-      userId = data?.user?.id
-      created = true
-
       if (error) {
-        const message = (error.message || '').toLowerCase()
-        const mayExist = message.includes('already') || message.includes('registered') || message.includes('exists')
-
-        if (!mayExist) {
-          return new Response(JSON.stringify({ error: error.message }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          })
-        }
-
-        const { data: listedUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
-        if (listError) {
-          return new Response(JSON.stringify({ error: listError.message }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          })
-        }
-
-        const existing = (listedUsers?.users || []).find((u) => (u.email || '').toLowerCase() === normalizedEmail)
-        if (!existing?.id) {
-          return new Response(JSON.stringify({ error: 'User exists but could not be resolved by email.' }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          })
-        }
-
-        const { data: updatedUser, error: updateError } = await supabase.auth.admin.updateUserById(existing.id, {
-          password,
-          email_confirm: true,
-          user_metadata: name || phone ? { ...existing.user_metadata, name: name || existing.user_metadata?.name, phone: phone || existing.user_metadata?.phone } : undefined,
-          app_metadata: {
-            must_change_password: true
-          }
-        })
-
-        if (updateError) {
-          return new Response(JSON.stringify({ error: updateError.message }), {
-            status: 400,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-          })
-        }
-
-        userId = updatedUser?.user?.id || existing.id
-        created = false
-      }
-    } else {
-      // Find existing user by email
-      const { data: listedUsers, error: listError } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 })
-      if (listError) {
-        return new Response(JSON.stringify({ error: listError.message }), {
+        return new Response(JSON.stringify({ error: error.message }), {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
 
-      const existing = (listedUsers?.users || []).find((u) => (u.email || '').toLowerCase() === normalizedEmail)
-      if (existing?.id) {
-        userId = existing.id
-      }
+      userId = data?.user?.id
+      created = true
     }
 
     if (userId) {
@@ -118,6 +117,10 @@ serve(async (req) => {
   } catch (err) {
     return new Response(JSON.stringify({ error: err.message }), {
       status: 500,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    })
+  }
+})
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
   }

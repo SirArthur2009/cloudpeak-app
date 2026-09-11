@@ -9,7 +9,7 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    const { clientName, clientEmail, password, portalUrl } = await req.json()
+    const { clientName, clientEmail, password, portalUrl, isReset, mustChangePassword } = await req.json()
 
     if (!clientEmail || !password) {
       return new Response(JSON.stringify({ error: 'clientEmail and password are required' }), {
@@ -22,6 +22,20 @@ serve(async (req) => {
     const loginUrl = portalUrl || 'https://cloudpeaksilverlabradors.com/waitlist.html'
     const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <onboarding@resend.dev>'
 
+    const subject = isReset
+      ? 'Your Cloud Peak portal password has been reset'
+      : 'Welcome to your Cloud Peak portal'
+
+    const passwordLabel = (mustChangePassword ?? true) ? 'Temporary password' : 'New password'
+    const passwordNote = (mustChangePassword ?? true)
+      ? '<p>When you sign in, you will be asked to choose a new password before continuing.</p>'
+      : '<p>You can use this password to sign in to your portal.</p>'
+
+    const introHtml = isReset
+      ? `<p>Your password for the Cloud Peak Silver Labradors portal has been reset.</p>`
+      : `<p>Welcome to the Cloud Peak Silver Labradors client portal.</p>
+         <p>You have been added to the waitlist portal and can now log in to view available puppies, track your place in line, and review pedigree information.</p>`
+
     const res = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
@@ -31,15 +45,14 @@ serve(async (req) => {
       body: JSON.stringify({
         from: fromEmail,
         to: clientEmail,
-        subject: 'Welcome to your Cloud Peak portal',
+        subject,
         html: `
           <h2>Hi ${safeName},</h2>
-          <p>Welcome to the Cloud Peak Silver Labradors client portal.</p>
-          <p>You have been added to the waitlist portal and can now log in to view available puppies, track your place in line, and review pedigree information.</p>
+          ${introHtml}
 
           <p><strong>Login email:</strong> ${clientEmail}</p>
-          <p><strong>Temporary password:</strong> ${password}</p>
-          <p>When you sign in for the first time, you will be asked to choose a new password before continuing.</p>
+          <p><strong>${passwordLabel}:</strong> ${password}</p>
+          ${passwordNote}
           <p><a href="${loginUrl}" style="display:inline-block;padding:10px 20px;background:#1a1a1a;color:#fff;border-radius:6px;text-decoration:none;">Open Portal</a></p>
 
           <h3>How to use the portal</h3>

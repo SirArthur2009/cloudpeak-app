@@ -12,7 +12,8 @@ export default function Login({ onPasswordChangeRequired }) {
     setLoading(true)
     setError('')
 
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    const cleanEmail = email.trim().toLowerCase()
+    const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password })
 
     if (error) {
       setError(error.message)

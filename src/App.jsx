@@ -36,21 +36,35 @@ function App() {
     setPasswordChangeSuccess('')
     setPasswordChangeLoading(true)
 
+    const userEmail = session?.user?.email
+
     const { error } = await supabase.functions.invoke('complete-first-password-change', {
       body: { password: newPassword }
     })
 
     if (error) {
-      setPasswordChangeError(error.message)
+      setPasswordChangeError(error.message || 'Failed to update password')
       setPasswordChangeLoading(false)
       return
     }
 
-    const { error: refreshError } = await supabase.auth.refreshSession()
-    if (refreshError) {
-      setPasswordChangeError(refreshError.message)
-      setPasswordChangeLoading(false)
-      return
+    // Re-authenticate with the newly set password to obtain a fresh valid session
+    if (userEmail) {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: userEmail,
+        password: newPassword
+      })
+
+      if (signInError) {
+        // If re-login encounters any issue, sign out cleanly and instruct user to sign in
+        await supabase.auth.signOut()
+        setPasswordChangeSuccess('Password updated successfully! Please sign in with your new password.')
+        setPasswordChangeLoading(false)
+        setTimeout(() => {
+          window.location.assign('/')
+        }, 1500)
+        return
+      }
     }
 
     setPasswordChangeSuccess('Password updated successfully. You can continue to the portal.')

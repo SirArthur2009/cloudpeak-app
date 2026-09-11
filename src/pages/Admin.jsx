@@ -41,6 +41,18 @@ async function callFunction(name, body) {
   return data
 }
 
+function generateTemporaryPassword() {
+  const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz'
+  let out = ''
+  for (let i = 0; i < 9; i += 1) {
+    out += chars[Math.floor(Math.random() * chars.length)]
+  }
+  const specials = '!@#$%&*'
+  out += specials[Math.floor(Math.random() * specials.length)]
+  out += Math.floor(Math.random() * 90 + 10)
+  return out
+}
+
 function isMissingLitterIdColumnError(error) {
   const msg = String(error?.message || '').toLowerCase()
   return msg.includes("could not find the 'litter_id' column") || msg.includes('column "litter_id" does not exist')
@@ -1048,6 +1060,7 @@ function WaitlistTab() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', notes: '', password: '', litter_id: '' })
   const [saving, setSaving] = useState(false)
+  const [resettingWaitlistId, setResettingWaitlistId] = useState(null)
   const [message, setMessage] = useState('')
   const [activePerson, setActivePerson] = useState(null)
   const [pendingPerson, setPendingPerson] = useState(null)
@@ -1115,12 +1128,46 @@ function WaitlistTab() {
       return
     }
     setEditing('new')
-    setForm({ name: '', email: '', phone: '', position: waitlist.length + 1, notes: '', password: '', litter_id: selectedLitterId })
+    setForm({ name: '', email: '', phone: '', position: waitlist.length + 1, notes: '', password: generateTemporaryPassword(), litter_id: selectedLitterId })
   }
 
   function startEdit(person) {
     setEditing(person.id)
     setForm({ name: person.name || '', email: person.email || '', phone: person.phone || '', position: person.position || '', notes: person.notes || '', password: '', litter_id: String(person.litter_id || selectedLitterId || '') })
+  }
+
+  async function handleResetPasswordForWaitlist(person) {
+    if (!person.email) {
+      setMessage('Error: This person has no email address.')
+      return
+    }
+    if (!confirm(`Reset portal password for ${person.name} (${person.email}) and email them a new temporary password?`)) return
+
+    setResettingWaitlistId(person.id)
+    setMessage('')
+    try {
+      const tempPassword = generateTemporaryPassword()
+      await callFunction('create-client-user', {
+        email: person.email,
+        password: tempPassword,
+        name: person.name,
+        phone: person.phone,
+        role: 'client',
+        must_change_password: true
+      })
+      await callFunction('send-client-portal-credentials', {
+        clientName: person.name,
+        clientEmail: person.email,
+        password: tempPassword,
+        portalUrl: PORTAL_URL,
+        isReset: true,
+        mustChangePassword: true
+      })
+      setMessage(`Password for ${person.name} reset to "${tempPassword}" and emailed to ${person.email}!`)
+    } catch (err) {
+      setMessage(`Error: ${err.message || 'Failed to reset password'}`)
+    }
+    setResettingWaitlistId(null)
   }
 
   async function handleSave() {
@@ -1131,9 +1178,11 @@ function WaitlistTab() {
 
     if (editing === 'new') {
       if (!form.email || !form.password) { setMessage('Email and password are required for new entries.'); setSaving(false); return }
-      const { error: authError } = await supabase.auth.admin
-        ? { error: null }
-        : { error: null }
+
+      const email = form.email.trim().toLowerCase()
+      const fullName = form.name.trim() || 'New Client'
+      const phone = form.phone.trim()
+
       let highestPositionRow = null
       const highestByLitter = await supabase
         .from('waitlist')
@@ -1159,18 +1208,18 @@ function WaitlistTab() {
       const position = Number(form.position || defaultPosition)
 
       let { error } = await supabase.from('waitlist').insert({
-        name: form.name,
-        email: form.email,
-        phone: form.phone,
+        name: fullName,
+        email,
+        phone,
         position,
         notes: form.notes,
         litter_id: form.litter_id
       })
       if (error && isMissingLitterIdColumnError(error)) {
         const retry = await supabase.from('waitlist').insert({
-          name: form.name,
-          email: form.email,
-          phone: form.phone,
+          name: fullName,
+          email,
+          phone,
           position,
           notes: form.notes
         })
@@ -1179,10 +1228,33 @@ function WaitlistTab() {
           migrationWarning = 'Added without litter assignment. Run the waitlist litter_id migration to enable per-litter queueing.'
         }
       }
-      if (error) setMessage('Error: ' + error.message)
-      else {
+
+      if (error) {
+        setMessage('Error: ' + error.message)
+      } else {
+        try {
+          await callFunction('create-client-user', {
+            email,
+            password: form.password,
+            name: fullName,
+            phone,
+            role: 'client',
+            must_change_password: true
+          })
+          await callFunction('send-client-portal-credentials', {
+            clientName: fullName,
+            clientEmail: email,
+            password: form.password,
+            portalUrl: PORTAL_URL,
+            mustChangePassword: true
+          })
+        } catch (authErr) {
+          console.error('Failed to create client auth account:', authErr)
+          migrationWarning += ` (Note on account setup: ${authErr.message || 'Check Users tab'})`
+        }
+
         const nextLitterId = String(form.litter_id)
-        setMessage(migrationWarning || 'Added!')
+        setMessage(migrationWarning || `Added ${fullName} to waitlist and emailed credentials!`)
         setEditing(null)
         setSelectedLitterId(nextLitterId)
         fetchAll(nextLitterId)
@@ -1351,7 +1423,19 @@ function WaitlistTab() {
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Phone</label><input style={inputStyle} value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Position #</label><input type="number" style={inputStyle} value={form.position} onChange={e => setForm({ ...form, position: e.target.value })} /></div>
             {editing === 'new' && (
-              <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Password (required)</label><input type="password" style={inputStyle} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Set their portal password" /></div>
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#666' }}>Password (required)</label>
+                  <button
+                    type="button"
+                    onClick={() => setForm(prev => ({ ...prev, password: generateTemporaryPassword() }))}
+                    style={{ background: 'none', border: 'none', color: '#084298', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                  >
+                    Generate
+                  </button>
+                </div>
+                <input style={inputStyle} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} placeholder="Set their portal password" />
+              </div>
             )}
             <div style={{ gridColumn: '1 / -1' }}><label style={{ fontSize: '0.8rem', color: '#666' }}>Notes</label><textarea style={{ ...inputStyle, height: '80px', resize: 'vertical' }} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
           </FormGrid>
@@ -1385,6 +1469,14 @@ function WaitlistTab() {
               {(w.selected_puppy_id || w.pending_approval) && (
                 <button onClick={() => handleUnselect(w)} style={{ ...btnStyle, background: '#fff4e5', color: '#b36200', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Unselect</button>
               )}
+              <button
+                onClick={() => handleResetPasswordForWaitlist(w)}
+                disabled={resettingWaitlistId === w.id}
+                style={{ ...btnStyle, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
+                title="Reset password and email new credentials"
+              >
+                {resettingWaitlistId === w.id ? 'Resetting...' : 'Reset Password'}
+              </button>
               <button onClick={() => startEdit(w)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Edit</button>
               <button onClick={() => handleDelete(w.id)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Delete</button>
             </div>
@@ -1997,6 +2089,11 @@ function UsersTab() {
   const [editForm, setEditForm] = useState({ name: '', email: '', phone: '', role: 'client' })
   const [savingUser, setSavingUser] = useState(false)
 
+  const [passwordUserEmail, setPasswordUserEmail] = useState(null)
+  const [passwordForm, setPasswordForm] = useState({ password: '', mustChangePassword: true, sendEmail: true })
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [resettingEmail, setResettingEmail] = useState(null)
+
   const [addingUser, setAddingUser] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
   const [addingSaving, setAddingSaving] = useState(false)
@@ -2097,15 +2194,6 @@ function UsersTab() {
     setLoading(false)
   }
 
-  function generateTemporaryPassword() {
-    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%'
-    let out = ''
-    for (let i = 0; i < 12; i += 1) {
-      out += alphabet[Math.floor(Math.random() * alphabet.length)]
-    }
-    return out
-  }
-
   async function handleAddToWaitlist(user, litterId) {
     if (!litterId) {
       setError('Select a litter before adding this user to the waitlist.')
@@ -2142,8 +2230,8 @@ function UsersTab() {
       if (insertError) throw new Error(insertError.message)
 
       const tempPassword = generateTemporaryPassword()
-      await callFunction('create-client-user', { email, password: tempPassword, name: fullName, phone, role: user.role || 'client' })
-      await callFunction('send-client-portal-credentials', { clientName: fullName, clientEmail: email, password: tempPassword, portalUrl: PORTAL_URL })
+      await callFunction('create-client-user', { email, password: tempPassword, name: fullName, phone, role: user.role || 'client', must_change_password: true })
+      await callFunction('send-client-portal-credentials', { clientName: fullName, clientEmail: email, password: tempPassword, portalUrl: PORTAL_URL, mustChangePassword: true })
 
       setSuccess(`Added ${fullName} to waitlist and sent portal credentials!`)
       fetchUsersAndLitters()
@@ -2154,6 +2242,7 @@ function UsersTab() {
   }
 
   function startEditUser(u) {
+    setPasswordUserEmail(null)
     setEditingUserEmail(u.email)
     setEditForm({
       name: u.name || '',
@@ -2198,6 +2287,91 @@ function UsersTab() {
     setSavingUser(false)
   }
 
+  function startChangePassword(u) {
+    setEditingUserEmail(null)
+    setPasswordUserEmail(u.email)
+    setPasswordForm({
+      password: '',
+      mustChangePassword: true,
+      sendEmail: true
+    })
+  }
+
+  async function handleSaveCustomPassword(u) {
+    if (!passwordForm.password || passwordForm.password.length < 8) {
+      setError('Password must be at least 8 characters long.')
+      return
+    }
+
+    setPasswordSaving(true)
+    setError('')
+    setSuccess('')
+
+    try {
+      await callFunction('create-client-user', {
+        email: u.email,
+        password: passwordForm.password,
+        name: u.name,
+        phone: u.phone,
+        role: u.role,
+        must_change_password: passwordForm.mustChangePassword
+      })
+
+      if (passwordForm.sendEmail) {
+        await callFunction('send-client-portal-credentials', {
+          clientName: u.name,
+          clientEmail: u.email,
+          password: passwordForm.password,
+          portalUrl: PORTAL_URL,
+          isReset: true,
+          mustChangePassword: passwordForm.mustChangePassword
+        })
+      }
+
+      setSuccess(`Updated password for ${u.name}!${passwordForm.sendEmail ? ` Credentials emailed to ${u.email}.` : ''}`)
+      setPasswordUserEmail(null)
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Failed to update password')
+    }
+    setPasswordSaving(false)
+  }
+
+  async function handleResetAndEmailPassword(u) {
+    if (!confirm(`Reset password for ${u.name} (${u.email}) and email them a new temporary password?`)) return
+
+    setResettingEmail(u.email)
+    setError('')
+    setSuccess('')
+
+    try {
+      const tempPassword = generateTemporaryPassword()
+      await callFunction('create-client-user', {
+        email: u.email,
+        password: tempPassword,
+        name: u.name,
+        phone: u.phone,
+        role: u.role,
+        must_change_password: true
+      })
+
+      await callFunction('send-client-portal-credentials', {
+        clientName: u.name,
+        clientEmail: u.email,
+        password: tempPassword,
+        portalUrl: PORTAL_URL,
+        isReset: true,
+        mustChangePassword: true
+      })
+
+      setSuccess(`Password for ${u.name} reset to "${tempPassword}" and emailed to ${u.email}!`)
+      fetchUsersAndLitters()
+    } catch (err) {
+      setError(err.message || 'Failed to reset password')
+    }
+    setResettingEmail(null)
+  }
+
   async function handleDeleteUser(u) {
     if (!confirm(`Delete user ${u.name} (${u.email}) and all associated waitlist entries, applications, and portal credentials? This cannot be undone.`)) return
 
@@ -2232,7 +2406,8 @@ function UsersTab() {
         password: addForm.password,
         name,
         phone,
-        role
+        role,
+        must_change_password: true
       })
 
       if (addForm.litter_id) {
@@ -2253,16 +2428,17 @@ function UsersTab() {
           litter_id: addForm.litter_id,
           notes: 'Added upon user creation'
         })
-
-        await callFunction('send-client-portal-credentials', {
-          clientName: name,
-          clientEmail: email,
-          password: addForm.password,
-          portalUrl: PORTAL_URL
-        })
       }
 
-      setSuccess(`User ${name} created successfully!`)
+      await callFunction('send-client-portal-credentials', {
+        clientName: name,
+        clientEmail: email,
+        password: addForm.password,
+        portalUrl: PORTAL_URL,
+        mustChangePassword: true
+      })
+
+      setSuccess(`User ${name} created and credentials emailed!`)
       setAddingUser(false)
       setAddForm({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
       fetchUsersAndLitters()
@@ -2295,15 +2471,18 @@ function UsersTab() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
           <h3 style={{ fontWeight: 600, fontSize: '1.2rem' }}>Users</h3>
-          <p style={{ fontSize: '0.85rem', color: '#666' }}>Manage user accounts, roles, contact info, waitlist assignments, and communication.</p>
+          <p style={{ fontSize: '0.85rem', color: '#666' }}>Manage user accounts, roles, contact info, waitlist assignments, and passwords.</p>
         </div>
-        <button onClick={() => setAddingUser(!addingUser)} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>
+        <button onClick={() => {
+          setAddingUser(!addingUser)
+          if (!addingUser) setAddForm(prev => ({ ...prev, password: generateTemporaryPassword() }))
+        }} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>
           {addingUser ? 'Cancel Add User' : '+ Add User'}
         </button>
       </div>
 
       {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
-      {success && <p style={{ color: '#1f7a35', marginBottom: '1rem' }}>{success}</p>}
+      {success && <p style={{ color: '#1f7a35', marginBottom: '1rem', background: '#f0fbf2', border: '1px solid #b7ebc2', padding: '0.75rem', borderRadius: '8px' }}>{success}</p>}
 
       {addingUser && (
         <div style={{ background: '#f5f5f3', border: '1px solid #e0e0e0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
@@ -2319,7 +2498,19 @@ function UsersTab() {
                 <option value="admin">Admin</option>
               </select>
             </div>
-            <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Password (required)</label><input type="password" style={inputStyle} value={addForm.password} onChange={e => setAddForm({ ...addForm, password: e.target.value })} placeholder="Set portal password" /></div>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ fontSize: '0.8rem', color: '#666' }}>Password (required)</label>
+                <button
+                  type="button"
+                  onClick={() => setAddForm(prev => ({ ...prev, password: generateTemporaryPassword() }))}
+                  style={{ background: 'none', border: 'none', color: '#084298', fontSize: '0.75rem', cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+                >
+                  Generate Random
+                </button>
+              </div>
+              <input style={inputStyle} value={addForm.password} onChange={e => setAddForm({ ...addForm, password: e.target.value })} placeholder="Set portal password" />
+            </div>
             <div>
               <label style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist Litter (optional)</label>
               <select style={inputStyle} value={addForm.litter_id} onChange={e => setAddForm({ ...addForm, litter_id: e.target.value })}>
@@ -2330,7 +2521,7 @@ function UsersTab() {
           </FormGrid>
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
             <button onClick={handleCreateNewUser} disabled={addingSaving} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', flex: 1, padding: '0.75rem' }}>
-              {addingSaving ? 'Creating...' : 'Create User'}
+              {addingSaving ? 'Creating...' : 'Create User & Send Credentials'}
             </button>
             <button onClick={() => setAddingUser(false)} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', flex: 1, padding: '0.75rem' }}>Cancel</button>
           </div>
@@ -2388,6 +2579,20 @@ function UsersTab() {
                     Email
                   </a>
                 )}
+                <button
+                  onClick={() => handleResetAndEmailPassword(u)}
+                  disabled={resettingEmail === u.email}
+                  style={{ ...btnStyle, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                  title="Generate a new temporary password and email credentials"
+                >
+                  {resettingEmail === u.email ? 'Resetting...' : '🔄 Reset & Email Password'}
+                </button>
+                <button
+                  onClick={() => startChangePassword(u)}
+                  style={{ ...btnStyle, background: '#f0fdf4', color: '#15803d', border: '1px solid #bbf7d0', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}
+                >
+                  🔑 Change Password
+                </button>
                 <button onClick={() => startEditUser(u)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
                   Edit Info / Role
                 </button>
@@ -2416,6 +2621,67 @@ function UsersTab() {
                 {addingWaitlistEmail === u.email ? 'Adding...' : 'Add to Waitlist'}
               </button>
             </div>
+
+            {/* Change Password panel */}
+            {passwordUserEmail === u.email && (
+              <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '8px', padding: '0.85rem', display: 'grid', gap: '0.65rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                  <h5 style={{ fontWeight: 600, fontSize: '0.9rem', color: '#166534', margin: 0 }}>
+                    Change Password for {u.name} ({u.email})
+                  </h5>
+                  <button
+                    type="button"
+                    onClick={() => setPasswordForm(prev => ({ ...prev, password: generateTemporaryPassword() }))}
+                    style={{ ...btnStyle, background: '#dcfce7', color: '#15803d', border: '1px solid #86efac', fontSize: '0.75rem', padding: '0.2rem 0.5rem' }}
+                  >
+                    ⚡ Generate Random Password
+                  </button>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.78rem', color: '#555', display: 'block', marginBottom: '0.2rem' }}>New Password (min 8 characters)</label>
+                  <input
+                    type="text"
+                    style={inputStyle}
+                    value={passwordForm.password}
+                    onChange={e => setPasswordForm({ ...passwordForm, password: e.target.value })}
+                    placeholder="Enter new password"
+                  />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', marginTop: '0.2rem' }}>
+                  <label style={{ fontSize: '0.8rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={passwordForm.mustChangePassword}
+                      onChange={e => setPasswordForm({ ...passwordForm, mustChangePassword: e.target.checked })}
+                    />
+                    Require user to set a new password on their next sign-in
+                  </label>
+                  <label style={{ fontSize: '0.8rem', color: '#444', display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={passwordForm.sendEmail}
+                      onChange={e => setPasswordForm({ ...passwordForm, sendEmail: e.target.checked })}
+                    />
+                    Send email with new credentials to {u.email}
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.35rem' }}>
+                  <button
+                    onClick={() => handleSaveCustomPassword(u)}
+                    disabled={passwordSaving || !passwordForm.password}
+                    style={{ ...btnStyle, background: '#166534', color: '#fff', fontSize: '0.85rem', padding: '0.5rem 1rem', opacity: passwordSaving || !passwordForm.password ? 0.7 : 1 }}
+                  >
+                    {passwordSaving ? 'Updating Password...' : 'Save Password'}
+                  </button>
+                  <button
+                    onClick={() => setPasswordUserEmail(null)}
+                    style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', fontSize: '0.85rem', padding: '0.5rem 0.85rem' }}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Editing mode for user contact info / role */}
             {editingUserEmail === u.email && (
