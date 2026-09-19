@@ -75,17 +75,28 @@ serve(async (req) => {
       })
     }
 
-    const { thread_id, to, subject, message, reply_to } = await req.json()
-    if (!thread_id || !to || !message) {
-      return new Response(JSON.stringify({ error: 'thread_id, to, and message are required' }), {
+    const { thread_id, to, subject, message, reply_to, sender } = await req.json()
+    if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(to).trim()) || !message || !String(message).trim() || !subject || !String(subject).trim()) {
+      return new Response(JSON.stringify({ error: 'Recipient, subject, and message are required' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })
     }
 
-    const fromEmail = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>'
+    const senders: Record<string, string> = {
+      noreply: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+      levi: 'Levi at Cloud Peak <levi@cloudpeaksilverlabradors.com>',
+      leah: 'Leah at Cloud Peak <leah@cloudpeaksilverlabradors.com>',
+      admin: 'Cloud Peak Admin <admin@cloudpeaksilverlabradors.com>',
+      owner: 'Cloud Peak Owner <owner@cloudpeaksilverlabradors.com>',
+    }
+    if (sender && !senders[sender]) return new Response(JSON.stringify({ error: 'Invalid sender' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const fromEmail = sender ? senders[sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
     const forwardTo = Deno.env.get('FORWARD_TO_EMAIL') || DEFAULT_FORWARD_TO
-    const replySubject = subject && subject.trim().length > 0 ? subject : 'Re: your message'
+    const replySubject = String(subject).trim().slice(0, 300)
+    const safeText = String(message).trim().slice(0, 20000)
+    const safeHtml = `<p>${safeText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br />')}</p>`
+    const outboundThreadId = thread_id || crypto.randomUUID()
     const authHeaderValue = 'Bearer ' + resendKey
 
     const sendRes = await fetch('https://api.resend.com/emails', {
@@ -97,8 +108,8 @@ serve(async (req) => {
         bcc: forwardTo,
         reply_to: reply_to || undefined,
         subject: replySubject,
-        html: `<p>${String(message).replace(/\n/g, '<br />')}</p>`,
-        text: message,
+        html: safeHtml,
+        text: safeText,
       }),
     })
 
@@ -110,14 +121,14 @@ serve(async (req) => {
     const { data: savedEmail, error: insertError } = await adminClient
       .from('emails')
       .insert({
-        thread_id,
+        thread_id: outboundThreadId,
         direction: 'outbound',
         resend_id: sendData?.id ?? null,
         from_email: fromEmail,
         to_email: to,
         subject: replySubject,
-        text_body: message,
-        html_body: `<p>${String(message).replace(/\n/g, '<br />')}</p>`,
+        text_body: safeText,
+        html_body: safeHtml,
         is_read: true,
       })
       .select('id, thread_id, direction, from_email, to_email, subject, text_body, html_body, is_read, created_at')

@@ -28,6 +28,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
   const [litters, setLitters] = useState([])
   const [templates, setTemplates] = useState([])
   const [audience, setAudience] = useState(initialLitterId ? `litter:${initialLitterId}` : 'waitlists')
+  const [sender, setSender] = useState('admin')
   const [customRecipients, setCustomRecipients] = useState('')
   const [count, setCount] = useState(0)
   const [subject, setSubject] = useState('')
@@ -129,7 +130,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
     if (!confirm(`Send this email to approximately ${count} unique addresses?`)) return
     setBusy(true); setMessage('Sending...')
     const { data, error } = await supabase.functions.invoke('send-waitlist-campaign', {
-      body: { audience, recipients: audience === 'custom' ? [...new Set(recipients)] : undefined, subject: subject.trim(), message: body.trim() }
+      body: { audience, sender, recipients: audience === 'custom' ? [...new Set(recipients)] : undefined, subject: subject.trim(), message: body.trim() }
     })
     setBusy(false)
     setMessage(error?.message || data?.error || `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`)
@@ -151,6 +152,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
       <span style={{ color: '#666' }}>Each address receives a separate email. Duplicate addresses are sent once.</span>
     </label>}
     <p>{count} unique email {count === 1 ? 'address' : 'addresses'}</p>
+    <label>From<select style={field} value={sender} onChange={e => setSender(e.target.value)}><option value="admin">Admin</option><option value="levi">Levi</option><option value="leah">Leah</option><option value="owner">Owner</option><option value="noreply">No reply</option></select></label>
     <label>Saved template<select style={field} value={selectedTemplate} onChange={e => {
       const id = e.target.value; setSelectedTemplate(id)
       const template = templates.find(t => t.id === id)

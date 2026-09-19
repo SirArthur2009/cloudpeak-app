@@ -3,6 +3,49 @@ import { supabase } from '../lib/supabase'
 import { browserPreviewBlob, isHeicFile } from '../lib/explorerImages'
 import './ImageLibraryPicker.css'
 
+function PickerThumbnail({ file }) {
+  const tileRef = useRef(null)
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined')
+  const [preview, setPreview] = useState({ url: '', error: '' })
+  useEffect(() => {
+    if (!tileRef.current) return
+    if (!('IntersectionObserver' in window)) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '400px' })
+    observer.observe(tileRef.current)
+    return () => observer.disconnect()
+  }, [])
+  useEffect(() => {
+    if (!visible) return
+    let active = true
+    let objectUrl = ''
+    async function load() {
+      try {
+        const bucket = file.storage_bucket || 'admin-files'
+        if (isHeicFile(file)) {
+          const { data, error } = await supabase.storage.from(bucket).download(file.storage_path)
+          if (error) throw error
+          objectUrl = URL.createObjectURL(await browserPreviewBlob(data, file))
+          if (active) setPreview({ url: objectUrl, error: '' })
+        } else if (bucket !== 'admin-files') {
+          const url = supabase.storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
+          if (active) setPreview({ url, error: '' })
+        } else {
+          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(file.storage_path, 3600)
+          if (error) throw error
+          if (active) setPreview({ url: data.signedUrl, error: '' })
+        }
+      } catch (error) { if (active) setPreview({ url: '', error: error.message }) }
+    }
+    load()
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [visible, file])
+  return <span ref={tileRef} className="image-library-photo">
+    {preview.url ? <img src={preview.url} alt="" loading="lazy" draggable="false" onError={() => setPreview({ url: '', error: 'Preview unavailable' })} /> : <span className="image-library-placeholder" title={preview.error}><span aria-hidden="true">▧</span><small>{preview.error || (visible ? 'Loading photo…' : 'Photo')}</small></span>}
+  </span>
+}
+
 export default function ImageLibraryPicker({ onChoose, onClose, multiple = false }) {
   const [items, setItems] = useState([])
   const [folders, setFolders] = useState([])
@@ -23,7 +66,6 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
 
   useEffect(() => {
     let active = true
-    const previewUrls = new Set()
     async function load() {
       const { data: folderData, error: folderError } = await supabase.from('admin_folders').select('id, parent_id, name').order('name')
       if (folderError) { if (active) { setError(folderError.message); setLoading(false) } return }
@@ -36,38 +78,13 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
         if (!data || data.length < 500) break
       }
       const images = all.filter(file => file.content_type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(file.name))
-      const privateImages = images.filter(file => !file.storage_bucket || file.storage_bucket === 'admin-files')
-      const signed = []
-      let signError = null
-      for (let index = 0; index < privateImages.length; index += 100) {
-        const result = await supabase.storage.from('admin-files').createSignedUrls(privateImages.slice(index, index + 100).map(file => file.storage_path), 600)
-        if (result.error) { signError = result.error; break }
-        signed.push(...result.data)
-      }
       if (active) {
-        if (signError) setError(signError.message)
-        const privateUrls = new Map(privateImages.map((file, index) => [file.id, signed[index]?.signedUrl]))
-        setItems(images.map(file => ({ ...file, previewUrl: isHeicFile(file) ? null : file.storage_bucket && file.storage_bucket !== 'admin-files'
-          ? supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
-          : privateUrls.get(file.id), previewPending: isHeicFile(file) })))
+        setItems(images)
         setLoading(false)
-      }
-      for (const file of images.filter(isHeicFile)) {
-        if (!active) break
-        try {
-          const { data, error: downloadError } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
-          if (downloadError) throw downloadError
-          const url = URL.createObjectURL(await browserPreviewBlob(data, file))
-          if (!active) { URL.revokeObjectURL(url); break }
-          previewUrls.add(url)
-          setItems(current => current.map(item => item.id === file.id ? { ...item, previewUrl: url, previewPending: false } : item))
-        } catch (previewError) {
-          if (active) setItems(current => current.map(item => item.id === file.id ? { ...item, previewPending: false, previewError: previewError.message } : item))
-        }
       }
     }
     load()
-    return () => { active = false; for (const url of previewUrls) URL.revokeObjectURL(url) }
+    return () => { active = false }
   }, [])
 
   useEffect(() => {
@@ -97,17 +114,13 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
   const visible = items.filter(file => (folderFilter === 'all' || folderFilter === 'root' && file.folder_id === null || file.folder_id === folderFilter) && `${file.name} ${folderPath(file.folder_id)}`.toLowerCase().includes(query.toLowerCase()))
   function startSelection(event, index) {
     if (!multiple || event.pointerType === 'touch') return
-    ignoreClick.current = true
-    if (event.ctrlKey || event.metaKey) {
-      const id = visible[index].id
-      setSelectedIds(ids => ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id])
-      return
-    }
+    ignoreClick.current = null
     dragAnchor.current = index
-    setSelectedIds([visible[index].id])
   }
   function extendSelection(event, index) {
     if (!multiple || dragAnchor.current === null || event.buttons !== 1) return
+    if (dragAnchor.current === index) return
+    ignoreClick.current = true
     setSelectedIds(visible.slice(Math.min(dragAnchor.current, index), Math.max(dragAnchor.current, index) + 1).map(file => file.id))
   }
   function clickItem(file) {
@@ -119,12 +132,13 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
     <div className="image-library-dialog" role="dialog" aria-modal="true" aria-label="Choose image from files">
       <div className="image-library-header"><div><h3>Choose from Files</h3><p>Selected images become available to the public site and stay in Files.</p></div><button type="button" onClick={onClose} disabled={busy} aria-label="Close image library">×</button></div>
       <div className="image-library-controls"><label><span>SEARCH</span><input className="image-library-search" type="search" placeholder="Find an image" value={query} onChange={event => setQuery(event.target.value)} aria-label="Search images" /></label><label><span>LOCATION</span><select value={folderFilter} onChange={event => setFolderFilter(event.target.value)} aria-label="Filter by folder"><option value="all">All folders</option><option value="root">Files (top level)</option>{folders.map(folder => <option key={folder.id} value={folder.id}>{folderPath(folder.id)}</option>)}</select></label></div>
-      <div className="image-library-summary"><span>{visible.length} images</span>{multiple && <span>Drag across cards, Ctrl-click, or tap to select.</span>}</div>
+      <div className="image-library-summary"><span>{visible.length} images</span>{multiple && <span className="image-library-selection-actions"><button type="button" onClick={() => setSelectedIds(ids => [...new Set([...ids, ...visible.map(file => file.id)])])}>Select all shown</button><button type="button" onClick={() => setSelectedIds([])}>Clear selection</button></span>}</div>
       {error && <p className="image-library-error" role="alert">{error}</p>}
       {loading ? <p className="image-library-empty">Loading images…</p> : visible.length === 0 ? <p className="image-library-empty">No images found. Upload an image in Files first.</p> :
         <div className="image-library-grid">{visible.map((file, index) => <button type="button" className={selectedIds.includes(file.id) ? 'selected' : ''} key={file.id} onPointerDown={event => startSelection(event, index)} onPointerEnter={event => extendSelection(event, index)} onClick={() => clickItem(file)} disabled={busy} title={file.name} aria-pressed={multiple ? selectedIds.includes(file.id) : undefined}>
-          {file.previewUrl ? <img src={file.previewUrl} alt="" loading="lazy" draggable="false" /> : <span className="image-library-placeholder" title={file.previewError}>{file.previewPending ? 'Converting HEIC…' : file.previewError ? 'Preview unavailable' : 'Image'}</span>}
-          <span className="image-library-card-caption">{multiple && <span className="image-library-check" aria-hidden="true">{selectedIds.includes(file.id) ? '✓' : ''}</span>} <strong>{file.name}</strong><small>{folderPath(file.folder_id)}</small></span>
+          <PickerThumbnail file={file} />
+          {multiple && <span className="image-library-check" aria-hidden="true">{selectedIds.includes(file.id) ? '✓' : ''}</span>}
+          <span className="image-library-card-caption"><strong>{file.name}</strong></span>
         </button>)}</div>}
       {multiple && <div className="image-library-footer"><span>{selectedIds.length} selected · Drag across photos or tap to select</span><button type="button" disabled={busy || !selectedIds.length} onClick={() => choose(items.filter(file => selectedIds.includes(file.id)))}>Add selected photos</button></div>}
       {busy && <p className="image-library-working" role="status">Adding image…</p>}

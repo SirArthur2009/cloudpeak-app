@@ -26,6 +26,13 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     )
 
+    const token = req.headers.get('Authorization')?.match(/^Bearer (.+)$/i)?.[1]
+    if (!token) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const { data: caller, error: callerError } = await supabase.auth.getUser(token)
+    if (callerError || !caller.user) return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const { data: callerProfile } = await supabase.from('profiles').select('role').eq('id', caller.user.id).single()
+    if (callerProfile?.role !== 'admin') return new Response(JSON.stringify({ error: 'Admin access required' }), { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+
     const normalizedEmail = String(email).trim().toLowerCase()
     let userId: string | undefined
     let created = false
@@ -107,7 +114,8 @@ serve(async (req) => {
 
     if (userId) {
       const assignedRole = role === 'admin' ? 'admin' : 'client'
-      await supabase.from('profiles').upsert({ id: userId, role: assignedRole })
+      const { error: roleError } = await supabase.from('profiles').upsert({ id: userId, role: assignedRole })
+      if (roleError) throw roleError
     }
 
     return new Response(JSON.stringify({ ok: true, userId, created }), {

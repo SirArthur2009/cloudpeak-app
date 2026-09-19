@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as tus from 'tus-js-client'
 import { browserPreviewBlob, prepareExplorerFile } from '../lib/explorerImages'
@@ -40,6 +40,18 @@ function FileGlyph({ folder = false, image = false }) {
       : image ? <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m4 18 5-5 3 3 3-4 5 6"/></svg>
         : <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"><path d="M6 2.5h8l4 4V21H6a2 2 0 0 1-2-2V4.5a2 2 0 0 1 2-2Z"/><path d="M14 2.5v5h5M8 12h8M8 16h8"/></svg>}
   </span>
+}
+
+function FileThumbnail({ file }) {
+  const [url, setUrl] = useState('')
+  useEffect(() => {
+    let active = true
+    supabase.storage.from(file.storage_bucket || 'admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
+      if (active) setUrl(data?.signedUrl || '')
+    })
+    return () => { active = false }
+  }, [file.storage_bucket, file.storage_path])
+  return url ? <img className="file-thumbnail" src={url} alt="" loading="lazy" /> : <FileGlyph image />
 }
 
 export default function AdminFiles({ onOpenCleanup }) {
@@ -113,6 +125,7 @@ export default function AdminFiles({ onOpenCleanup }) {
 
   const children = folders.filter(f => f.parent_id === folderId)
   const currentFiles = files.filter(f => f.folder_id === folderId)
+  const folderImages = currentFiles.filter(isImage)
   const visibleFiles = currentFiles.filter(file => file.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'all' || filter === 'images' && isImage(file) || filter === 'other' && !isImage(file) || filter === 'public' && file.storage_bucket && file.storage_bucket !== 'admin-files'))
   const visibleFolders = filter === 'all' ? children.filter(folder => folder.name.toLowerCase().includes(search.toLowerCase())) : []
   const selectedFiles = visibleFiles.filter(f => selectedIds.includes(f.id))
@@ -220,19 +233,36 @@ export default function AdminFiles({ onOpenCleanup }) {
     })
     setUploadProgress(null)
   }
-  async function openPreview(file) {
+  const openPreview = useCallback(async file => {
     const request = ++previewRequest.current
-    setPreview({ name: file.name, loading: true })
+    setPreview({ id: file.id, name: file.name, loading: true })
     try {
       const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
       if (error) throw error
       const url = URL.createObjectURL(await browserPreviewBlob(data, file))
       if (request !== previewRequest.current) { URL.revokeObjectURL(url); return }
-      setPreview({ name: file.name, url })
+      setPreview({ id: file.id, name: file.name, url })
     } catch (error) {
       if (request === previewRequest.current) { setPreview(null); setMessage(error.message) }
     }
-  }
+  }, [])
+  const openAdjacentPreview = useCallback(direction => {
+    if (!preview) return
+    const images = files.filter(file => file.folder_id === folderId && isImage(file))
+    const currentIndex = images.findIndex(file => file.id === preview.id)
+    if (currentIndex < 0 || images.length < 2) return
+    const next = images[(currentIndex + direction + images.length) % images.length]
+    openPreview(next)
+  }, [preview, files, folderId, openPreview])
+  useEffect(() => {
+    if (!preview) return
+    const onKeyDown = event => {
+      if (event.key === 'ArrowLeft') { event.preventDefault(); openAdjacentPreview(-1) }
+      if (event.key === 'ArrowRight') { event.preventDefault(); openAdjacentPreview(1) }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [preview, openAdjacentPreview])
   async function download(file) {
     run(async () => {
       const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
@@ -480,7 +510,7 @@ export default function AdminFiles({ onOpenCleanup }) {
           <div className="file-actions"><button disabled={busy} onClick={() => downloadFolder(f)}>Download</button><button disabled={busy} onClick={() => startRename('folder', f)}>Rename</button><button className="danger" disabled={busy} onClick={() => removeFolder(f)}>Delete</button></div>
         </div>)}
         {visibleFiles.map(f => <div className={`file-row file-selectable-row${selectedIds.includes(f.id) ? ' selected' : ''}`} role="row" key={f.id} onPointerDown={event => selectRow(event, f.id)} onPointerEnter={event => extendSelection(event, f.id)}>
-          <div className="file-item"><input className="file-select-checkbox" type="checkbox" checked={selectedIds.includes(f.id)} onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))} disabled={busy} aria-label={`Select ${f.name}`} /><FileGlyph image={isImage(f)} />{renderName('file', f)}</div>
+          <div className="file-item"><input className="file-select-checkbox" type="checkbox" checked={selectedIds.includes(f.id)} onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))} disabled={busy} aria-label={`Select ${f.name}`} />{isImage(f) ? <FileThumbnail file={f} /> : <FileGlyph />}{renderName('file', f)}</div>
           <span className="file-meta">{fileKind(f)}{f.storage_bucket && f.storage_bucket !== 'admin-files' && <span className="file-public-label">Public</span>}</span><span className="file-meta">{formatSize(f.size_bytes)}</span><span className="file-meta">{formatDate(f.created_at)}</span>
           <div className="file-actions"><div className="file-menu-wrap"><button type="button" className="file-menu-trigger" disabled={busy} aria-label={`Actions for ${f.name}`} aria-expanded={openMenuId === f.id} aria-haspopup="menu" onClick={() => setOpenMenuId(id => id === f.id ? null : f.id)}>Actions <span aria-hidden="true">▾</span></button>{openMenuId === f.id && <div className="file-menu" role="menu">{isImage(f) && <button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); openPreview(f) }}>View</button>}<button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); download(f) }}>Download</button><button type="button" role="menuitem" onClick={() => startRename('file', f)}>Rename</button><button type="button" role="menuitem" className="danger" onClick={() => { setOpenMenuId(null); removeFile(f) }}>Delete</button></div>}</div></div>
         </div>)}
@@ -489,8 +519,12 @@ export default function AdminFiles({ onOpenCleanup }) {
     </div>
     {preview && <div className="file-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) { previewRequest.current++; setPreview(null) } }}>
       <div className="file-preview-dialog" role="dialog" aria-modal="true" aria-label={`Image preview: ${preview.name}`}>
-        <div className="file-preview-header"><strong title={preview.name}>{preview.name}</strong><button type="button" aria-label="Close image viewer" onClick={() => { previewRequest.current++; setPreview(null) }}>×</button></div>
-        <div className="file-preview-body">{preview.loading ? <p>Loading image…</p> : <img src={preview.url} alt={preview.name} />}</div>
+        <div className="file-preview-header"><strong title={preview.name}>{preview.name}</strong><span>{folderImages.findIndex(file => file.id === preview.id) + 1} of {folderImages.length}</span><button type="button" aria-label="Close image viewer" onClick={() => { previewRequest.current++; setPreview(null) }}>×</button></div>
+        <div className={`file-preview-body${folderImages.length > 1 ? ' has-navigation' : ''}`}>
+          {folderImages.length > 1 && <button className="file-preview-arrow" type="button" aria-label="Previous picture" onClick={() => openAdjacentPreview(-1)}>‹</button>}
+          {preview.loading ? <p>Loading image…</p> : <img src={preview.url} alt={preview.name} />}
+          {folderImages.length > 1 && <button className="file-preview-arrow" type="button" aria-label="Next picture" onClick={() => openAdjacentPreview(1)}>›</button>}
+        </div>
       </div>
     </div>}
   </section>

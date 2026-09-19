@@ -25,6 +25,14 @@ serve(async req => {
     const subject = String(payload.subject || '').trim()
     const message = String(payload.message || '').trim()
     const audience = String(payload.audience || 'waitlists')
+    const senders: Record<string, string> = {
+      noreply: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+      levi: 'Levi at Cloud Peak <levi@cloudpeaksilverlabradors.com>',
+      leah: 'Leah at Cloud Peak <leah@cloudpeaksilverlabradors.com>',
+      admin: 'Cloud Peak Admin <admin@cloudpeaksilverlabradors.com>',
+      owner: 'Cloud Peak Owner <owner@cloudpeaksilverlabradors.com>',
+    }
+    if (payload.sender && !senders[payload.sender]) return reply({ error: 'Invalid sender' }, 400)
     const customRecipients = payload.recipients
     const litterId = audience.startsWith('litter:') ? audience.slice(7) : null
     if (!subject || subject.length > 300 || !message || message.length > 20000) return reply({ error: 'Invalid subject or message' }, 400)
@@ -56,7 +64,7 @@ serve(async req => {
     }
     if (addresses.size > 1000) return reply({ error: 'This group is too large to send in one campaign.' }, 400)
 
-    const from = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>'
+    const from = payload.sender ? senders[payload.sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
     const html = renderCampaignMarkdown(message)
     let sent = 0
     let failed = 0

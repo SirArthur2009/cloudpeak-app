@@ -57,10 +57,10 @@ serve(async (req) => {
       })
     }
 
-    const { data: applications, error: applicationsError } = await adminClient
-      .from('applications')
-      .select('*')
-      .order('created_at', { ascending: true })
+    const { unarchived_only = false } = await req.json().catch(() => ({}))
+    let applicationsQuery = adminClient.from('applications').select('*').order('created_at', { ascending: true })
+    if (unarchived_only) applicationsQuery = applicationsQuery.or('status.is.null,status.neq.archived')
+    const { data: applications, error: applicationsError } = await applicationsQuery
 
     if (applicationsError) {
       throw new Error(`Could not load applications: ${applicationsError.message}`)

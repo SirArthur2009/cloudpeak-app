@@ -1305,7 +1305,6 @@ function WaitlistTab() {
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', notes: '', password: '', litter_id: '' })
   const [saving, setSaving] = useState(false)
-  const [resettingWaitlistId, setResettingWaitlistId] = useState(null)
   const [message, setMessage] = useState('')
   const [activePerson, setActivePerson] = useState(null)
   const [pendingPerson, setPendingPerson] = useState(null)
@@ -1379,40 +1378,6 @@ function WaitlistTab() {
   function startEdit(person) {
     setEditing(person.id)
     setForm({ name: person.name || '', email: person.email || '', phone: person.phone || '', position: person.position || '', notes: person.notes || '', password: '', litter_id: String(person.litter_id || selectedLitterId || '') })
-  }
-
-  async function handleResetPasswordForWaitlist(person) {
-    if (!person.email) {
-      setMessage('Error: This person has no email address.')
-      return
-    }
-    if (!confirm(`Reset portal password for ${person.name} (${person.email}) and email them a new temporary password?`)) return
-
-    setResettingWaitlistId(person.id)
-    setMessage('')
-    try {
-      const tempPassword = generateTemporaryPassword()
-      await callFunction('create-client-user', {
-        email: person.email,
-        password: tempPassword,
-        name: person.name,
-        phone: person.phone,
-        role: 'client',
-        must_change_password: true
-      })
-      await callFunction('send-client-portal-credentials', {
-        clientName: person.name,
-        clientEmail: person.email,
-        password: tempPassword,
-        portalUrl: PORTAL_URL,
-        isReset: true,
-        mustChangePassword: true
-      })
-      setMessage(`Password for ${person.name} reset to "${tempPassword}" and emailed to ${person.email}!`)
-    } catch (err) {
-      setMessage(`Error: ${err.message || 'Failed to reset password'}`)
-    }
-    setResettingWaitlistId(null)
   }
 
   async function handleSave() {
@@ -1721,14 +1686,6 @@ function WaitlistTab() {
               {(w.selected_puppy_id || w.pending_approval) && (
                 <button onClick={() => handleUnselect(w)} style={{ ...btnStyle, background: '#fff4e5', color: '#b36200', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Unselect</button>
               )}
-              <button
-                onClick={() => handleResetPasswordForWaitlist(w)}
-                disabled={resettingWaitlistId === w.id}
-                style={{ ...btnStyle, background: '#eef2ff', color: '#4338ca', border: '1px solid #c7d2fe', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}
-                title="Reset password and email new credentials"
-              >
-                {resettingWaitlistId === w.id ? 'Resetting...' : 'Reset Password'}
-              </button>
               <button onClick={() => startEdit(w)} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Edit</button>
               <button onClick={() => handleDelete(w.id)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Delete</button>
             </div>
@@ -2345,6 +2302,7 @@ function UsersTab() {
   const [passwordForm, setPasswordForm] = useState({ password: '', mustChangePassword: true, sendEmail: true })
   const [passwordSaving, setPasswordSaving] = useState(false)
   const [resettingEmail, setResettingEmail] = useState(null)
+  const [actionsUserEmail, setActionsUserEmail] = useState(null)
 
   const [addingUser, setAddingUser] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
@@ -2360,11 +2318,11 @@ function UsersTab() {
   async function fetchUsersAndLitters() {
     setLoading(true)
     setError('')
-    const [{ data: waitlistData }, { data: appsData }, { data: profilesData }, { data: littersData }] = await Promise.all([
+    const [{ data: waitlistData }, { data: appsData }, { data: littersData }, authUsers] = await Promise.all([
       supabase.from('waitlist').select('*, puppies(name)').order('position'),
       supabase.from('applications').select('*').order('created_at', { ascending: false }),
-      supabase.from('profiles').select('*'),
-      supabase.from('litters').select('id, name, birth_date, born_date').order('created_at', { ascending: false })
+      supabase.from('litters').select('id, name, birth_date, born_date').order('created_at', { ascending: false }),
+      callFunction('list-client-users', {}).catch(() => ({ users: [] }))
     ])
 
     setLitters(littersData || [])
@@ -2433,12 +2391,15 @@ function UsersTab() {
       u.waitlist_entries.push(w)
     }
 
-    // 4. Profiles
-    if (profilesData && profilesData.length > 0) {
-      const profileRoleMap = new Map(profilesData.map(p => [p.id, p.role]))
-      if (currentUser?.id && profileRoleMap.has(currentUser.id)) {
-        const u = userMap.get(currentUser.email.toLowerCase())
-        if (u) u.role = profileRoleMap.get(currentUser.id) || 'admin'
+    // 4. Auth accounts and their actual roles
+    for (const account of authUsers.users || []) {
+      const existing = userMap.get(account.email)
+      if (existing) {
+        existing.role = account.role
+        existing.profile_id = account.id
+        if (!existing.phone) existing.phone = account.phone
+      } else {
+        userMap.set(account.email, { email: account.email, name: account.name || account.email, phone: account.phone, role: account.role, profile_id: account.id, waitlist_entries: [], applications: [] })
       }
     }
 
@@ -2668,7 +2629,7 @@ function UsersTab() {
         must_change_password: true
       })
 
-      if (addForm.litter_id) {
+      if (role !== 'admin' && addForm.litter_id) {
         const byLitter = await supabase
           .from('waitlist')
           .select('position')
@@ -2769,13 +2730,13 @@ function UsersTab() {
               </div>
               <input style={inputStyle} value={addForm.password} onChange={e => setAddForm({ ...addForm, password: e.target.value })} placeholder="Set portal password" />
             </div>
-            <div>
+            {addForm.role !== 'admin' && <div>
               <label style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist Litter (optional)</label>
               <select style={inputStyle} value={addForm.litter_id} onChange={e => setAddForm({ ...addForm, litter_id: e.target.value })}>
                 <option value="">Do not add to waitlist</option>
                 {litters.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
               </select>
-            </div>
+            </div>}
           </FormGrid>
           <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
             <button onClick={handleCreateNewUser} disabled={addingSaving} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', flex: 1, padding: '0.75rem' }}>
@@ -2828,6 +2789,8 @@ function UsersTab() {
               </div>
 
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                <button onClick={() => setActionsUserEmail(current => current === u.email ? null : u.email)} aria-expanded={actionsUserEmail === u.email} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.35rem 0.7rem' }}>More actions</button>
+                {actionsUserEmail === u.email && <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', width: '100%' }}>
                 {u.phone && (
                   <a href={`tel:${u.phone}`} style={{ ...btnStyle, background: '#f8f8f8', border: '1px solid #ddd', color: '#333', fontSize: '0.8rem', textDecoration: 'none', padding: '0.35rem 0.7rem' }}>
                     Call
@@ -2858,11 +2821,12 @@ function UsersTab() {
                 <button onClick={() => handleDeleteUser(u)} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', border: '1px solid #fcc', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>
                   Delete User
                 </button>
+                </div>}
               </div>
             </div>
 
             {/* Add to waitlist inline section (only show if not already on any waitlist) */}
-            {u.waitlist_entries.length === 0 && (
+            {u.role !== 'admin' && u.waitlist_entries.length === 0 && (
               <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: '8px', padding: '0.5rem 0.75rem' }}>
                 <span style={{ fontSize: '0.8rem', color: '#666' }}>Add to Waitlist:</span>
                 <select
@@ -3060,9 +3024,14 @@ function EmailTab() {
   const [error, setError] = useState('')
   const [selectedThreadId, setSelectedThreadId] = useState(null)
   const [replyMessage, setReplyMessage] = useState('')
+  const replyRef = useRef(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
   const [viewFilter, setViewFilter] = useState('inbox') // 'inbox' or 'archived'
+  const [composing, setComposing] = useState(false)
+  const [compose, setCompose] = useState({ to: '', subject: '', message: '' })
+  const [sender, setSender] = useState('admin')
+  const senderOptions = [['admin', 'Admin'], ['levi', 'Levi'], ['leah', 'Leah'], ['owner', 'Owner'], ['noreply', 'No reply']]
 
   async function fetchEmails() {
     setLoading(true)
@@ -3136,7 +3105,8 @@ function EmailTab() {
     if (viewFilter === 'archived') {
       return allThreads.filter(t => t.isArchived)
     }
-    return allThreads.filter(t => !t.isArchived)
+    if (viewFilter === 'sent') return allThreads.filter(t => !t.isArchived && t.messages.some(m => m.direction === 'outbound'))
+    return allThreads.filter(t => !t.isArchived && t.messages.some(m => m.direction === 'inbound'))
   }, [allThreads, viewFilter])
 
   const selectedThread = allThreads.find(t => t.threadId === selectedThreadId) || null
@@ -3155,8 +3125,7 @@ function EmailTab() {
   async function handleReply() {
     if (!selectedThread || !replyMessage.trim()) return
     const lastInbound = [...selectedThread.messages].reverse().find(m => m.direction === 'inbound')
-    const to = lastInbound?.from_email || selectedThread.latest.from_email
-    const replyTo = lastInbound?.to_email || ''
+    const to = lastInbound?.from_email || selectedThread.latest.to_email
     const subject = selectedThread.latest.subject || ''
 
     setSending(true)
@@ -3165,9 +3134,9 @@ function EmailTab() {
       const result = await callFunction('send-email-reply', {
         thread_id: selectedThread.threadId,
         to,
-        reply_to: replyTo,
         subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`,
         message: replyMessage,
+        sender,
       })
       setReplyMessage('')
       if (result.email) {
@@ -3177,6 +3146,18 @@ function EmailTab() {
     } catch (err) {
       setSendError(err.message)
     }
+    setSending(false)
+  }
+
+  async function handleCompose() {
+    setSending(true); setSendError('')
+    try {
+      await callFunction('send-email-reply', { ...compose, sender })
+      setCompose({ to: '', subject: '', message: '' })
+      setComposing(false)
+      setViewFilter('sent')
+      await fetchEmails()
+    } catch (err) { setSendError(err.message) }
     setSending(false)
   }
 
@@ -3199,16 +3180,18 @@ function EmailTab() {
   if (loading) return <p style={{ color: '#888' }}>Loading email...</p>
 
   const archivedCount = allThreads.filter(t => t.isArchived).length
-  const inboxCount = allThreads.filter(t => !t.isArchived).length
+  const inboxCount = allThreads.filter(t => !t.isArchived && t.messages.some(m => m.direction === 'inbound')).length
+  const sentCount = allThreads.filter(t => !t.isArchived && t.messages.some(m => m.direction === 'outbound')).length
 
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
         <div>
           <h4 style={{ fontWeight: 600, marginBottom: '0.25rem' }}>Email</h4>
-          <p style={{ fontSize: '0.85rem', color: '#666' }}>Messages received via cloudpeaksilverlabradors.com are also forwarded to cloudpeaksilverlabs@yahoo.com.</p>
+          <p style={{ fontSize: '0.85rem', color: '#666' }}>Send, receive, and reply to messages.</p>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button onClick={() => { setComposing(true); setSendError('') }} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }} aria-label="Compose email">✎ Compose</button>
           <div style={{ display: 'flex', border: '1px solid #ddd', borderRadius: '6px', overflow: 'hidden' }}>
             <button
               onClick={() => { setViewFilter('inbox'); setSelectedThreadId(null) }}
@@ -3223,6 +3206,7 @@ function EmailTab() {
             >
               Inbox ({inboxCount})
             </button>
+            <button onClick={() => { setViewFilter('sent'); setSelectedThreadId(null) }} style={{ padding: '0.35rem 0.75rem', border: 'none', borderLeft: '1px solid #ddd', background: viewFilter === 'sent' ? '#1a1a1a' : '#fff', color: viewFilter === 'sent' ? '#fff' : '#333', cursor: 'pointer' }}>Sent ({sentCount})</button>
             <button
               onClick={() => { setViewFilter('archived'); setSelectedThreadId(null) }}
               style={{
@@ -3242,10 +3226,19 @@ function EmailTab() {
         </div>
       </div>
       {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
-      {!error && threads.length === 0 && <p style={{ color: '#888' }}>{viewFilter === 'archived' ? 'No archived emails.' : 'No email in inbox.'}</p>}
+      {composing && <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16, marginBottom: 16, background: '#fff', display: 'grid', gap: 10 }}>
+        <strong>New message</strong>
+        <label>From<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        <label>To<input type="email" style={inputStyle} value={compose.to} onChange={e => setCompose({ ...compose, to: e.target.value })} /></label>
+        <label>Subject<input style={inputStyle} value={compose.subject} onChange={e => setCompose({ ...compose, subject: e.target.value })} /></label>
+        <label>Message<textarea rows={7} style={inputStyle} value={compose.message} onChange={e => setCompose({ ...compose, message: e.target.value })} /></label>
+        {sendError && <p style={{ color: '#b91c1c' }}>{sendError}</p>}
+        <div style={{ display: 'flex', gap: 8 }}><button disabled={sending || !compose.to || !compose.subject.trim() || !compose.message.trim()} onClick={handleCompose} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>Send</button><button onClick={() => setComposing(false)} style={btnStyle}>Discard</button></div>
+      </div>}
+      {!error && threads.length === 0 && <p style={{ color: '#888' }}>{viewFilter === 'archived' ? 'No archived emails.' : viewFilter === 'sent' ? 'No sent emails.' : 'No email in inbox.'}</p>}
 
       <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-        <div style={{ flex: '1 1 280px', minWidth: '260px', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
+        <div style={{ flex: '1 1 280px', minWidth: 0, width: '100%', display: 'flex', flexDirection: 'column', gap: '0.5rem', maxHeight: '520px', overflowY: 'auto' }}>
           {threads.map(thread => {
             const rawEmail = thread.latest.direction === 'inbound' ? thread.latest.from_email : thread.latest.to_email
             const matchedName = getDisplayName(rawEmail)
@@ -3279,10 +3272,11 @@ function EmailTab() {
         </div>
 
         {selectedThread && (
-          <div style={{ flex: '2 1 400px', minWidth: '300px', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem' }}>
+          <div style={{ flex: '2 1 400px', minWidth: 0, width: '100%', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem', overflowWrap: 'anywhere' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h5 style={{ fontWeight: 600, fontSize: '0.95rem', margin: 0 }}>Thread Messages</h5>
               <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button onClick={() => replyRef.current?.focus()} style={{ ...btnStyle, background: '#eef2ff', color: '#3730a3', fontSize: '0.8rem', padding: '0.35rem 0.7rem' }}>↩ Reply</button>
                 {selectedThread.isArchived ? (
                   <button
                     onClick={() => handleArchiveThread(selectedThread.threadId, false)}
@@ -3327,7 +3321,9 @@ function EmailTab() {
             </div>
 
             {sendError && <p style={{ color: 'red', marginBottom: '0.5rem' }}>Error: {sendError}</p>}
+            <label style={{ display: 'block', marginBottom: 8 }}>Reply from<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             <textarea
+              ref={replyRef}
               value={replyMessage}
               onChange={e => setReplyMessage(e.target.value)}
               placeholder="Write a reply..."
@@ -3348,19 +3344,19 @@ function EmailTab() {
   )
 }
 
-function SettingsTab({ initialView = 'email' }) {
+function SettingsTab({ initialView = 'tools' }) {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const [failures, setFailures] = useState([])
   const [settingsView, setSettingsView] = useState(initialView)
 
-  async function handleResendAllApplications() {
-    if (!confirm('Resend email notifications for all puppy applications?')) return
+  async function handleResendAllApplications(unarchivedOnly = false) {
+    if (!confirm(`Resend email notifications for ${unarchivedOnly ? 'all unarchived' : 'all'} puppy applications?`)) return
     setSending(true)
     setMessage('')
     setFailures([])
     try {
-      const result = await callFunction('resend-all-applications', {})
+      const result = await callFunction('resend-all-applications', { unarchived_only: unarchivedOnly })
       const sent = result?.sent_count ?? 0
       const total = result?.total_applications ?? 0
       const failed = result?.failed_count ?? 0
@@ -3380,12 +3376,10 @@ function SettingsTab({ initialView = 'email' }) {
       </p>
 
       <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-        <button onClick={() => setSettingsView('email')} style={{ ...btnStyle, background: settingsView === 'email' ? '#1a1a1a' : '#fff', border: settingsView === 'email' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'email' ? '#fff' : '#333' }}>Email</button>
         <button onClick={() => setSettingsView('tools')} style={{ ...btnStyle, background: settingsView === 'tools' ? '#1a1a1a' : '#fff', border: settingsView === 'tools' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'tools' ? '#fff' : '#333' }}>Tools</button>
         <button onClick={() => setSettingsView('archived-applications')} style={{ ...btnStyle, background: settingsView === 'archived-applications' ? '#1a1a1a' : '#fff', border: settingsView === 'archived-applications' ? '1px solid #1a1a1a' : '1px solid #ddd', color: settingsView === 'archived-applications' ? '#fff' : '#333' }}>Archived Applications</button>
       </div>
 
-      {settingsView === 'email' && <EmailTab />}
       {settingsView === 'archived-applications' && <ArchivedApplicationsTab />}
       {settingsView === 'tools' && <>
 
@@ -3398,15 +3392,16 @@ function SettingsTab({ initialView = 'email' }) {
       <div style={{ background: '#fff8e5', border: '1px solid #ffe08a', borderRadius: '10px', padding: '1rem' }}>
         <p style={{ fontWeight: 600, marginBottom: '0.35rem' }}>Resend application emails</p>
         <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '0.85rem' }}>
-          Sends the puppy application notification email again for every application currently in the database.
+          Resend puppy application notifications for all applications or only unarchived applications.
         </p>
         <button
-          onClick={handleResendAllApplications}
+          onClick={() => handleResendAllApplications(false)}
           disabled={sending}
           style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.65rem 1rem' }}
         >
           {sending ? 'Resending...' : 'Resend All Applications'}
         </button>
+        <button onClick={() => handleResendAllApplications(true)} disabled={sending} style={{ ...btnStyle, background: '#fff', border: '1px solid #ddd', marginLeft: 8, padding: '0.65rem 1rem' }}>Resend Unarchived Applications</button>
 
         {failures.length > 0 && (
           <div style={{ marginTop: '1rem', borderTop: '1px solid #f0d98a', paddingTop: '0.75rem' }}>
@@ -3478,9 +3473,10 @@ function PaymentsTab() {
 
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
-  const [settingsInitialView, setSettingsInitialView] = useState('email')
+  const [settingsInitialView, setSettingsInitialView] = useState('tools')
+  const [emailView, setEmailView] = useState('inbox')
   const [bornNotice, setBornNotice] = useState(null)
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'payments', 'applications', 'users', 'files', 'email campaigns', 'settings']
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'payments', 'applications', 'users', 'files', 'email', 'settings']
 
   return (
     <div>
@@ -3495,20 +3491,21 @@ function AdminDashboard() {
         ))}
       </div>
       {tab === 'puppies' && <PuppiesTab />}
-      {tab === 'litters' && <LittersTab onBorn={notice => { setBornNotice(notice); setTab('email campaigns') }} />}
+      {tab === 'litters' && <LittersTab onBorn={notice => { setBornNotice(notice); setEmailView('campaigns'); setTab('email') }} />}
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
       {tab === 'payments' && <PaymentsTab />}
       {tab === 'applications' && <ApplicationsTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'files' && <AdminFiles onOpenCleanup={() => { setSettingsInitialView('tools'); setTab('settings') }} />}
-      {tab === 'email campaigns' && <>
+      {tab === 'email' && <>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}><button onClick={() => setEmailView('inbox')} style={{ ...btnStyle, background: emailView === 'inbox' ? '#1a1a1a' : '#eee', color: emailView === 'inbox' ? '#fff' : '#222' }}>Inbox</button><button onClick={() => setEmailView('campaigns')} style={{ ...btnStyle, background: emailView === 'campaigns' ? '#1a1a1a' : '#eee', color: emailView === 'campaigns' ? '#fff' : '#222' }}>Campaigns</button></div>
         {bornNotice && <div role="dialog" aria-label="Litter birth email reminder" style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#0008', display: 'grid', placeItems: 'center', padding: 20 }}><div style={{ maxWidth: 500, background: '#fff', borderRadius: 12, padding: 24 }}>
           <h3>{bornNotice.name} has a born date</h3>
           <p style={{ margin: '12px 0' }}>Send the birth announcement to this litter's waitlist. Remind guests with a $100 pre-litter deposit that the next $400 is due. Review recipients and payment records before sending.</p>
           <button onClick={() => setBornNotice(null)} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>Continue to email campaigns</button>
         </div></div>}
-        <AdminCampaigns initialLitterId={bornNotice?.id} />
+        {emailView === 'inbox' ? <EmailTab /> : <AdminCampaigns initialLitterId={bornNotice?.id} />}
       </>}
       {tab === 'settings' && <SettingsTab initialView={settingsInitialView} />}
     </div>
