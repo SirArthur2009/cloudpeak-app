@@ -14,9 +14,10 @@ export function puppyStoragePath(url) {
   } catch { return null }
 }
 
-async function allRows(table, columns) {
+async function allRows(table, columns, signal) {
   const rows = []
   for (let offset = 0; ; offset += 500) {
+    signal?.throwIfAborted()
     const { data, error } = await supabase.from(table).select(columns).order('id').range(offset, offset + 499)
     if (error) throw error
     rows.push(...(data || []))
@@ -55,12 +56,13 @@ export function visualDistance(first, second) {
   return distance
 }
 
-export async function scanPuppyPhotoDuplicates(onProgress) {
+export async function scanPuppyPhotoDuplicates(onProgress, signal) {
   const [files, gallery, puppies] = await Promise.all([
-    allRows('admin_files', 'id, name, content_type, storage_path, storage_bucket'),
-    allRows('puppy_photos', 'id, puppy_id, photo_url'),
-    allRows('puppies', 'id, name, photo_url')
+    allRows('admin_files', 'id, name, content_type, storage_path, storage_bucket', signal),
+    allRows('puppy_photos', 'id, puppy_id, photo_url', signal),
+    allRows('puppies', 'id, name, photo_url', signal)
   ])
+  signal?.throwIfAborted()
   const images = files.filter(isImage)
   const puppyNames = new Map(puppies.map(puppy => [puppy.id, puppy.name]))
   const references = [
@@ -69,20 +71,31 @@ export async function scanPuppyPhotoDuplicates(onProgress) {
   ].filter(row => puppyStoragePath(row.url))
   const alreadyLinked = new Set(images.filter(file => file.storage_bucket && file.storage_bucket !== 'admin-files').map(file => supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl))
   const imageSignatures = []
+  const uniqueUrls = [...new Set(references.map(row => row.url).filter(url => !alreadyLinked.has(url)))]
+  const total = images.length + uniqueUrls.length + references.length + 1
+  let completed = 0
+  onProgress({ completed, total, label: 'Preparing image comparison' })
   for (const [index, file] of images.entries()) {
-    onProgress(`Checking explorer image ${index + 1} of ${images.length}`)
-    const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
-    if (error) continue
-    imageSignatures.push({ file, signature: await signature(data, file.name) })
+    signal?.throwIfAborted()
+    onProgress({ completed, total, label: `Checking explorer image ${index + 1} of ${images.length}` })
+    const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path, {}, { signal })
+    signal?.throwIfAborted()
+    if (!error) imageSignatures.push({ file, signature: await signature(data, file.name) })
+    onProgress({ completed: ++completed, total, label: `Checked explorer image ${index + 1} of ${images.length}` })
   }
   const sourceSignatures = new Map()
-  const uniqueUrls = [...new Set(references.map(row => row.url).filter(url => !alreadyLinked.has(url)))]
   for (const [index, url] of uniqueUrls.entries()) {
-    onProgress(`Checking puppy photo ${index + 1} of ${uniqueUrls.length}`)
-    const { data, error } = await supabase.storage.from('puppy-photos').download(puppyStoragePath(url))
+    signal?.throwIfAborted()
+    onProgress({ completed, total, label: `Checking puppy photo ${index + 1} of ${uniqueUrls.length}` })
+    const { data, error } = await supabase.storage.from('puppy-photos').download(puppyStoragePath(url), {}, { signal })
+    signal?.throwIfAborted()
     if (!error) sourceSignatures.set(url, await signature(data, url))
+    onProgress({ completed: ++completed, total, label: `Checked puppy photo ${index + 1} of ${uniqueUrls.length}` })
   }
-  const matches = references.filter(row => sourceSignatures.has(row.url)).map(row => {
+  const matches = references.map((row, index) => {
+    signal?.throwIfAborted()
+    onProgress({ completed: ++completed, total, label: `Comparing photo ${index + 1} of ${references.length}` })
+    if (!sourceSignatures.has(row.url)) return null
     const source = sourceSignatures.get(row.url)
     const sourceName = imageName(puppyStoragePath(row.url))
     const candidates = imageSignatures.flatMap(({ file, signature: target }) => {
@@ -93,15 +106,18 @@ export async function scanPuppyPhotoDuplicates(onProgress) {
       return [{ file, reason: exact ? 'Identical file' : distance <= 2 ? 'Image match' : 'Name match', score: exact ? 0 : distance <= 2 ? 1 : 2 }]
     }).sort((a, b) => a.score - b.score || a.file.name.localeCompare(b.file.name))
     return { ...row, candidates }
-  }).filter(row => row.candidates.length)
+  }).filter(row => row?.candidates.length)
   const privateFiles = [...new Map(matches.flatMap(row => row.candidates.map(candidate => candidate.file)).filter(file => !file.storage_bucket || file.storage_bucket === 'admin-files').map(file => [file.id, file])).values()]
+  onProgress({ completed, total, label: 'Preparing previews' })
   const previewUrls = new Map()
   for (let index = 0; index < privateFiles.length; index += 100) {
+    signal?.throwIfAborted()
     const batch = privateFiles.slice(index, index + 100)
     const { data, error } = await supabase.storage.from('admin-files').createSignedUrls(batch.map(file => file.storage_path), 600)
     if (!error) batch.forEach((file, offset) => previewUrls.set(file.id, data[offset]?.signedUrl))
   }
   for (const file of images.filter(item => item.storage_bucket && item.storage_bucket !== 'admin-files')) previewUrls.set(file.id, supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl)
+  onProgress({ completed: total, total, label: 'Scan complete' })
   return matches.map(row => ({ ...row, candidates: row.candidates.map(candidate => ({ ...candidate, previewUrl: previewUrls.get(candidate.file.id) })) }))
 }
 

@@ -24,10 +24,11 @@ async function loadAddresses(table, litterId) {
   return addresses
 }
 
-export default function AdminCampaigns() {
+export default function AdminCampaigns({ initialLitterId = null }) {
   const [litters, setLitters] = useState([])
   const [templates, setTemplates] = useState([])
-  const [audience, setAudience] = useState('waitlists')
+  const [audience, setAudience] = useState(initialLitterId ? `litter:${initialLitterId}` : 'waitlists')
+  const [customRecipients, setCustomRecipients] = useState('')
   const [count, setCount] = useState(0)
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
@@ -87,6 +88,11 @@ export default function AdminCampaigns() {
   useEffect(() => {
     let active = true
     setCount(0)
+    if (audience === 'custom') {
+      const addresses = customRecipients.split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(validEmail)
+      setCount(new Set(addresses).size)
+      return
+    }
     Promise.all([
       audience === 'applicants' || audience === 'everyone' ? loadAddresses('applications') : Promise.resolve(new Set()),
       audience !== 'applicants' ? loadAddresses('waitlist', audience.startsWith('litter:') ? audience.slice(7) : null) : Promise.resolve(new Set())
@@ -94,7 +100,7 @@ export default function AdminCampaigns() {
       if (active) setCount(new Set([...applicants, ...waitlist]).size)
     }).catch(error => { if (active) setMessage(error.message) })
     return () => { active = false }
-  }, [audience])
+  }, [audience, customRecipients])
 
   async function saveTemplate() {
     if (!templateName.trim() || !subject.trim() || !body.trim()) { setMessage('Template name, subject, and message are required.'); return }
@@ -117,11 +123,13 @@ export default function AdminCampaigns() {
   }
   async function send() {
     if (!subject.trim() || !body.trim()) { setMessage('Subject and message are required.'); return }
+    const recipients = customRecipients.split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(Boolean)
+    if (audience === 'custom' && recipients.some(email => !validEmail(email))) { setMessage('Fix the invalid email addresses before sending.'); return }
     if (!count) { setMessage('No recipients in this audience.'); return }
     if (!confirm(`Send this email to approximately ${count} unique addresses?`)) return
     setBusy(true); setMessage('Sending...')
     const { data, error } = await supabase.functions.invoke('send-waitlist-campaign', {
-      body: { audience, subject: subject.trim(), message: body.trim() }
+      body: { audience, recipients: audience === 'custom' ? [...new Set(recipients)] : undefined, subject: subject.trim(), message: body.trim() }
     })
     setBusy(false)
     setMessage(error?.message || data?.error || `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`)
@@ -137,7 +145,11 @@ export default function AdminCampaigns() {
       </optgroup>)}
       <option value="everyone">Everyone (waitlists and applicants)</option>
       <option value="applicants">Everyone who applied</option>
+      <option value="custom">Specific email addresses</option>
     </select></label>
+    {audience === 'custom' && <label>Email addresses<textarea style={{ ...field, minHeight: 90 }} value={customRecipients} onChange={e => setCustomRecipients(e.target.value)} placeholder="One address per line, or separate with commas" />
+      <span style={{ color: '#666' }}>Each address receives a separate email. Duplicate addresses are sent once.</span>
+    </label>}
     <p>{count} unique email {count === 1 ? 'address' : 'addresses'}</p>
     <label>Saved template<select style={field} value={selectedTemplate} onChange={e => {
       const id = e.target.value; setSelectedTemplate(id)

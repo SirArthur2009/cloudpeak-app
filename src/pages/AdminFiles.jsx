@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import * as tus from 'tus-js-client'
 import { browserPreviewBlob, prepareExplorerFile } from '../lib/explorerImages'
 import { convertPhotosToPng } from '../lib/convertPhotosToPng'
+import { estimatedTimeRemaining } from '../lib/progressEta'
 import './AdminFiles.css'
 
 const formatSize = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`
@@ -61,6 +62,8 @@ export default function AdminFiles({ onOpenCleanup }) {
   const [openMenuId, setOpenMenuId] = useState(null)
   const [folderProgress, setFolderProgress] = useState(null)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [conversionCancelling, setConversionCancelling] = useState(false)
+  const conversionController = useRef(null)
   const dragAnchor = useRef(null)
 
   useEffect(() => {
@@ -395,13 +398,16 @@ export default function AdminFiles({ onOpenCleanup }) {
   async function convertAllImages() {
     setToolsOpen(false)
     if (!confirm('Convert all tracked images in Files and puppy/dog photos to PNG? Photo links will be updated. This may take several minutes.')) return
-    setBusy(true); setMessage(''); setFolderProgress({ current: 0, total: 0, name: 'Finding images', percent: 0 })
+    const startedAt = Date.now()
+    const controller = new AbortController()
+    conversionController.current = controller
+    setBusy(true); setConversionCancelling(false); setMessage(''); setFolderProgress({ current: 0, completed: 0, total: 0, name: 'Finding images', percent: 0, eta: 'Estimating…' })
     try {
-      const result = await convertPhotosToPng(setFolderProgress)
+      const result = await convertPhotosToPng(progress => setFolderProgress({ ...progress, eta: controller.signal.aborted ? 'Stopping after this image…' : estimatedTimeRemaining(startedAt, progress.completed, progress.total) }), controller.signal)
       await refresh()
-      setMessage(`Converted ${result.converted} images to PNG; ${result.skipped} were already PNG.${result.failed.length ? ` ${result.failed.length} failed: ${result.failed.join('; ')}` : ''}`)
-    } catch (error) { setMessage(`Conversion stopped: ${error.message}`) }
-    finally { setFolderProgress(null); setBusy(false) }
+      setMessage(`${result.cancelled ? 'Conversion cancelled. ' : ''}Converted ${result.converted} images to PNG; ${result.skipped} were already PNG.${result.failed.length ? ` ${result.failed.length} failed: ${result.failed.join('; ')}` : ''}`)
+    } catch (error) { setMessage(controller.signal.aborted ? 'Conversion cancelled before any images were changed.' : `Conversion stopped: ${error.message}`) }
+    finally { conversionController.current = null; setFolderProgress(null); setConversionCancelling(false); setBusy(false) }
   }
   const renderName = (type, item) => editing?.type === type && editing.id === item.id
     ? <form className="file-rename" onSubmit={event => { event.preventDefault(); rename(type, item) }}>
@@ -443,7 +449,7 @@ export default function AdminFiles({ onOpenCleanup }) {
         <p title={uploadProgress.name}>{uploadProgress.name}</p>
         <progress value={uploadProgress.percent} max="100" aria-label="Upload progress" />
       </div>}
-      {folderProgress && <div className="file-upload-progress" role="status" aria-live="polite"><div><strong>{folderProgress.total !== undefined ? `Converting image ${folderProgress.current} of ${folderProgress.total}` : 'Downloading folder'}</strong><span>{folderProgress.percent}%</span></div><p title={folderProgress.name}>{folderProgress.name}</p><progress value={folderProgress.percent} max="100" aria-label="Image processing progress" /></div>}
+      {folderProgress && <div className="file-upload-progress" role="status" aria-live="polite"><div><strong>{folderProgress.total !== undefined ? folderProgress.total ? `Converting image ${folderProgress.current} of ${folderProgress.total}` : 'Finding images to convert' : 'Downloading folder'}</strong><span>{folderProgress.percent}%</span></div><p title={folderProgress.name}>{folderProgress.name}{folderProgress.eta ? ` · ${folderProgress.eta}` : ''}</p><progress value={folderProgress.percent} max="100" aria-label="Image processing progress" />{folderProgress.total !== undefined && <button type="button" className="file-cancel-work" disabled={conversionCancelling} onClick={() => { conversionController.current?.abort(); setConversionCancelling(true); setFolderProgress(progress => progress && { ...progress, eta: 'Stopping after this image…' }) }}>Cancel conversion</button>}</div>}
       <nav className="file-breadcrumbs" aria-label="Folder path">
         <button onClick={() => goToFolder(null)} aria-current={folderId === null ? 'page' : undefined}>Files</button>
         {crumbs.map(f => <span key={f.id} className="file-crumb"><span aria-hidden="true">›</span><button onClick={() => goToFolder(f.id)} aria-current={folderId === f.id ? 'page' : undefined}>{f.name}</button></span>)}

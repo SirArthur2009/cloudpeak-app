@@ -2,9 +2,10 @@ import * as tus from 'tus-js-client'
 import { supabase } from './supabase'
 import { isImageFile, prepareExplorerFile } from './explorerImages'
 
-async function allRows(table, columns) {
+async function allRows(table, columns, signal) {
   const rows = []
   for (let offset = 0; ; offset += 500) {
+    signal?.throwIfAborted()
     const { data, error } = await supabase.from(table).select(columns).order('id').range(offset, offset + 499)
     if (error) throw error
     rows.push(...(data || []))
@@ -41,13 +42,14 @@ async function uploadPng(bucket, path, file) {
   }).start())
 }
 
-export async function convertPhotosToPng(onProgress) {
+export async function convertPhotosToPng(onProgress, signal) {
   const [files, gallery, puppies, dogs] = await Promise.all([
-    allRows('admin_files', 'id, name, content_type, storage_bucket, storage_path'),
-    allRows('puppy_photos', 'id, photo_url'),
-    allRows('puppies', 'id, photo_url'),
-    allRows('dogs', 'id, photo_url')
+    allRows('admin_files', 'id, name, content_type, storage_bucket, storage_path', signal),
+    allRows('puppy_photos', 'id, photo_url', signal),
+    allRows('puppies', 'id, photo_url', signal),
+    allRows('dogs', 'id, photo_url', signal)
   ])
+  signal?.throwIfAborted()
   const sources = new Map()
   function add(bucket, path, item) {
     const key = `${bucket}/${path}`
@@ -64,10 +66,11 @@ export async function convertPhotosToPng(onProgress) {
   const pending = [...sources.values()].filter(source =>
     source.files.some(file => file.content_type !== 'image/png' || !file.name.toLowerCase().endsWith('.png')) ||
     (source.bucket !== 'admin-files' && !source.path.toLowerCase().endsWith('.png')))
-  const result = { converted: 0, skipped: 0, failed: [] }
+  const result = { converted: 0, skipped: 0, failed: [], cancelled: false }
   for (const [index, source] of pending.entries()) {
+    if (signal?.aborted) { result.cancelled = true; break }
     const label = source.files[0]?.name || source.path.split('/').pop()
-    onProgress({ current: index + 1, total: pending.length, name: label, percent: Math.round(index / pending.length * 100) })
+    onProgress({ current: index + 1, completed: index, total: pending.length, name: label, percent: Math.round(index / pending.length * 100) })
     try {
       const { data, error } = await supabase.storage.from(source.bucket).download(source.path)
       if (error) throw error
@@ -91,8 +94,9 @@ export async function convertPhotosToPng(onProgress) {
     } catch (error) {
       result.failed.push(`${label}: ${error.message}`)
     }
+    onProgress({ current: index + 1, completed: index + 1, total: pending.length, name: label, percent: Math.round((index + 1) / pending.length * 100) })
   }
   result.skipped = sources.size - pending.length
-  onProgress({ current: pending.length, total: pending.length, name: 'Finished', percent: 100 })
+  if (!result.cancelled) onProgress({ current: pending.length, completed: pending.length, total: pending.length, name: 'Finished', percent: 100 })
   return result
 }

@@ -12,6 +12,8 @@
 .file-upload-progress > div { display: flex; justify-content: space-between; gap: 12px; }
 .file-upload-progress p { margin: 4px 0 8px; color: #647986; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-upload-progress progress { display: block; width: 100%; height: 8px; accent-color: #476e80; }
+.file-cancel-work { margin-top: 8px; padding: 3px 0; border: 0; background: none; color: #a44c45; cursor: pointer; font: inherit; font-weight: 700; }
+.file-cancel-work:disabled { opacity: .55; cursor: default; }
 .file-breadcrumbs { display: flex; gap: 10px; align-items: center; padding: 14px 20px; border-bottom: 1px solid #edf0f2; overflow-x: auto; white-space: nowrap; }
 .file-breadcrumbs button { background: none; border: 0; color: #697984; cursor: pointer; font: inherit; font-size: .88rem; padding: 0; }
 .file-breadcrumbs button[aria-current="page"] { color: #263944; font-weight: 700; }

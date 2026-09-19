@@ -10,6 +10,7 @@ import DuplicatePhotoTool from './DuplicatePhotoTool'
 import { prepareExplorerFile, publishExplorerImage } from '../lib/explorerImages'
 import { auditPuppyImages, checkCandidateImage, findImageMatch, signaturesForPhotos } from '../lib/puppyImageChecks'
 import { signature } from '../lib/duplicatePhotos'
+import { estimatedTimeRemaining } from '../lib/progressEta'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -92,6 +93,67 @@ async function uploadFile(bucket, file) {
   }
   const { data } = supabase.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
+}
+
+const paymentTypes = {
+  pre_litter_deposit: ['Pre-litter deposit', 100],
+  post_litter_deposit: ['Post-litter deposit', 400],
+  born_litter_deposit: ['New deposit after birth', 550],
+  final_payment: ['Final payment', 1000],
+  full_payment: ['Paid in full', 1500],
+  other: ['Other payment', '']
+}
+const money = amount => `$${Number(amount || 0).toFixed(2)}`
+function paymentSummary(payments, born) {
+  const paid = payments.reduce((sum, p) => sum + Number(p.amount), 0)
+  const startedBeforeBirth = payments.some(p => p.payment_type === 'pre_litter_deposit' || p.payment_type === 'post_litter_deposit')
+  const depositTarget = born ? (startedBeforeBirth ? 500 : 550) : 100
+  return { paid, dueNow: Math.max(0, depositTarget - paid), balance: Math.max(0, 1500 - paid) }
+}
+
+function GuestPayments({ guest, litter, compact = false }) {
+  const [payments, setPayments] = useState([])
+  const [type, setType] = useState(litter?.birth_date || litter?.born_date ? 'born_litter_deposit' : 'pre_litter_deposit')
+  const [amount, setAmount] = useState(litter?.birth_date || litter?.born_date ? '550' : '100')
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
+  const [note, setNote] = useState('')
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  useEffect(() => {
+    let active = true
+    supabase.from('guest_payments').select('*').eq('waitlist_id', guest.id).order('paid_at', { ascending: false }).then(({ data, error: loadError }) => {
+      if (active) { setPayments(data || []); setError(loadError?.message || '') }
+    })
+    return () => { active = false }
+  }, [guest.id])
+  const summary = paymentSummary(payments, litter?.birth_date || litter?.born_date)
+  async function record() {
+    const value = Number(amount)
+    if (!Number.isFinite(value) || value <= 0 || !date) { setError('Enter a positive amount and payment date.'); return }
+    setBusy(true); setError('')
+    const { data: { user } } = await supabase.auth.getUser()
+    const { data, error: saveError } = await supabase.from('guest_payments').insert({ waitlist_id: guest.id, payment_type: type, amount: value, paid_at: date, note: note.trim(), recorded_by: user?.id }).select().single()
+    if (saveError) setError(saveError.message)
+    else { setPayments(current => [data, ...current]); setNote(''); setOpen(false) }
+    setBusy(false)
+  }
+  return <div style={{ fontSize: '0.8rem', marginTop: '0.45rem' }}>
+    <span style={{ color: summary.dueNow ? '#a63b16' : '#24703c', fontWeight: 600 }}>{summary.dueNow ? `${money(summary.dueNow)} due now` : 'Deposit current'}</span>
+    <span style={{ color: '#666' }}> · {money(summary.paid)} paid · {money(summary.balance)} total remaining</span>
+    <button type="button" onClick={() => setOpen(!open)} style={{ ...btnStyle, marginLeft: '0.5rem', padding: '0.2rem 0.5rem', background: '#eef2ff', color: '#3730a3', fontSize: '0.75rem' }}>{open ? 'Close' : 'Record payment / history'}</button>
+    {error && <p style={{ color: '#b91c1c' }}>Payment error: {error}</p>}
+    {open && <div style={{ background: '#f8f8f8', border: '1px solid #ddd', borderRadius: 8, padding: 10, marginTop: 8 }}>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
+        <label>Type<select style={inputStyle} value={type} onChange={e => { setType(e.target.value); setAmount(String(e.target.value === 'final_payment' ? summary.balance : paymentTypes[e.target.value][1])) }}>{Object.entries(paymentTypes).map(([key, [label]]) => <option key={key} value={key}>{label}</option>)}</select></label>
+        <label>Amount<input type="number" min="0.01" step="0.01" style={{ ...inputStyle, width: 110 }} value={amount} onChange={e => setAmount(e.target.value)} /></label>
+        <label>Date<input type="date" style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></label>
+        <label>Note<input style={inputStyle} value={note} onChange={e => setNote(e.target.value)} /></label>
+        <button type="button" disabled={busy} onClick={record} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>{busy ? 'Saving...' : 'Save payment'}</button>
+      </div>
+      {!compact && <div style={{ marginTop: 8 }}>{payments.length ? payments.map(p => <p key={p.id}>{p.paid_at} · {paymentTypes[p.payment_type]?.[0] || p.payment_type} · {money(p.amount)}{p.note ? ` · ${p.note}` : ''}</p>) : 'No payments recorded yet.'}</div>}
+    </div>}
+  </div>
 }
 
 async function browserReadablePhoto(file) {
@@ -214,6 +276,9 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
   const [auditPairs, setAuditPairs] = useState([])
   const [auditStatus, setAuditStatus] = useState('')
   const [auditBusy, setAuditBusy] = useState(false)
+  const [auditProgress, setAuditProgress] = useState(null)
+  const [auditCancelling, setAuditCancelling] = useState(false)
+  const auditController = useRef(null)
   const fileRef = useRef()
   const videoRef = useRef()
 
@@ -273,17 +338,23 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
   }
 
   async function checkExistingPhotos(gallery = photos) {
-    setAuditBusy(true); setAuditStatus('Checking existing photos...')
+    const startedAt = Date.now()
+    const controller = new AbortController()
+    auditController.current = controller
+    setAuditBusy(true); setAuditCancelling(false); setAuditStatus('Checking existing photos...'); setAuditProgress({ completed: 0, total: 0 })
     try {
       const references = [
         ...(coverUrl ? [{ url: coverUrl, label: 'Cover photo' }] : []),
         ...gallery.map((photo, index) => ({ url: photo.photo_url, label: `Gallery photo ${index + 1}` }))
       ]
-      const pairs = await auditPuppyImages(references)
+      const pairs = await auditPuppyImages(references, progress => {
+        setAuditProgress(progress)
+        setAuditStatus(`${progress.label} · ${estimatedTimeRemaining(startedAt, progress.completed, progress.total)}`)
+      }, controller.signal)
       setAuditPairs(pairs)
       setAuditStatus(pairs.length ? `${pairs.length} possible duplicate pair${pairs.length === 1 ? '' : 's'} found.` : 'No duplicate images found for this puppy.')
-    } catch (error) { setAuditStatus(`Could not finish checking photos: ${error.message}`) }
-    setAuditBusy(false)
+    } catch (error) { setAuditStatus(controller.signal.aborted ? 'Photo comparison cancelled.' : `Could not finish checking photos: ${error.message}`) }
+    auditController.current = null; setAuditProgress(null); setAuditCancelling(false); setAuditBusy(false)
   }
 
   // When files are selected, load them all into the crop queue
@@ -555,6 +626,7 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
         <button type="button" disabled={auditBusy || uploading} onClick={() => checkExistingPhotos()} style={{ ...btnStyle, border: '1px solid #d4dfe3', background: '#fff', color: '#3b6175', fontSize: '0.8rem' }}>{auditBusy ? 'Checking...' : 'Check duplicates again'}</button>
       </div>
       {auditStatus && <p role="status" style={{ fontSize: '0.8rem', color: auditPairs.length ? '#9b5a22' : '#627985', background: auditPairs.length ? '#fff6e8' : '#f1f6f8', padding: '0.65rem 0.8rem', borderRadius: '7px' }}>{auditStatus}</p>}
+      {auditProgress && <div style={{ marginTop: '-0.5rem', marginBottom: '0.8rem' }}><progress value={auditProgress.total ? auditProgress.completed : undefined} max={auditProgress.total || 1} aria-label="Puppy photo comparison progress" style={{ display: 'block', width: '100%', height: '9px', accentColor: '#476e80' }} /><span style={{ display: 'block', marginTop: '0.25rem', color: '#627985', fontSize: '0.75rem' }}>{auditProgress.total ? `${Math.round(auditProgress.completed / auditProgress.total * 100)}%` : 'Preparing images'}</span><button type="button" disabled={auditCancelling} onClick={() => { auditController.current?.abort(); setAuditCancelling(true); setAuditStatus('Cancelling photo comparison…') }} style={{ marginTop: '0.35rem', padding: 0, border: 0, background: 'none', color: '#a44c45', font: 'inherit', fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>Cancel comparison</button></div>}
       {auditPairs.map((pair, index) => <div key={`${pair.first.url}-${pair.second.url}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', padding: '0.7rem', border: '1px solid #efd8aa', borderRadius: '8px', background: '#fffaf1', flexWrap: 'wrap' }}>
         <img src={pair.first.url} alt={pair.first.label} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
         <img src={pair.second.url} alt={pair.second.label} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
@@ -978,7 +1050,7 @@ function PuppiesTab() {
 // Portal uses: birth_date, mother_id, father_id (existing columns)
 // Public site uses: born_date, sire, dam, expected_date, go_home_date, colors, status
 // We write to both so both work
-function LittersTab() {
+function LittersTab({ onBorn }) {
   const [litters, setLitters] = useState([])
   const [dogs, setDogs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -1039,11 +1111,13 @@ function LittersTab() {
       status: form.status,
       notes: form.notes
     }
-    const { error } = editing === 'new'
-      ? await supabase.from('litters').insert(payload)
-      : await supabase.from('litters').update(payload).eq('id', editing)
+    const previous = editing === 'new' ? null : litters.find(l => l.id === editing)
+    const wasBorn = previous?.birth_date || previous?.born_date
+    const { data: savedLitter, error } = editing === 'new'
+      ? await supabase.from('litters').insert(payload).select('id').single()
+      : await supabase.from('litters').update(payload).eq('id', editing).select('id').single()
     if (error) setMessage('Error: ' + error.message)
-    else { setMessage('Saved!'); setEditing(null); fetchAll() }
+    else { setMessage('Saved!'); setEditing(null); fetchAll(); if (form.birth_date && !wasBorn) onBorn({ id: savedLitter.id, name: form.name, date: form.birth_date }) }
     setSaving(false)
   }
 
@@ -1243,7 +1317,7 @@ function WaitlistTab() {
   async function fetchAll(forLitterId = selectedLitterId) {
     const [{ data: waitlistData }, { data: littersData }, { data: puppiesData }] = await Promise.all([
       supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
-      supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
+      supabase.from('litters').select('id, name, birth_date, born_date').order('created_at', { ascending: false }),
       supabase.from('puppies').select('litter_id, status')
     ])
     const litterList = littersData || []
@@ -1634,6 +1708,7 @@ function WaitlistTab() {
                 <span style={{ fontWeight: w.is_active || w.pending_approval ? 600 : 400 }}>{w.name}</span>
               </div>
               <p style={{ fontSize: '0.8rem', color: '#666' }}>{w.email}</p>
+              <GuestPayments guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} />
               {w.phone && <p style={{ fontSize: '0.8rem', color: '#888' }}>{w.phone}</p>}
               <p style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
                 {w.pending_approval ? <span style={{ color: '#b36200', fontWeight: 600 }}>⏳ Pending approval</span>
@@ -2289,7 +2364,7 @@ function UsersTab() {
       supabase.from('waitlist').select('*, puppies(name)').order('position'),
       supabase.from('applications').select('*').order('created_at', { ascending: false }),
       supabase.from('profiles').select('*'),
-      supabase.from('litters').select('id, name').order('created_at', { ascending: false })
+      supabase.from('litters').select('id, name, birth_date, born_date').order('created_at', { ascending: false })
     ])
 
     setLitters(littersData || [])
@@ -2744,6 +2819,7 @@ function UsersTab() {
                     Waitlist: {u.waitlist_entries.map(w => `#${w.position}`).join(', ')}
                   </p>
                 )}
+                {u.waitlist_entries.map(w => <GuestPayments key={w.id} guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} />)}
                 {u.applications.length > 0 && (
                   <p style={{ fontSize: '0.8rem', color: '#5555cc', marginTop: '0.15rem' }}>
                     {u.applications.length} Application(s) submitted
@@ -3366,10 +3442,45 @@ function SettingsTab({ initialView = 'email' }) {
 }
 
 // ── ADMIN DASHBOARD SHELL ──
+function PaymentsTab() {
+  const [rows, setRows] = useState([])
+  const [error, setError] = useState('')
+  const [filter, setFilter] = useState('due')
+  useEffect(() => {
+    let active = true
+    Promise.all([
+      supabase.from('waitlist').select('id, name, email, litter_id, position').order('position'),
+      supabase.from('litters').select('id, name, birth_date, born_date'),
+      supabase.from('guest_payments').select('waitlist_id, amount, payment_type')
+    ]).then(([guests, litters, payments]) => {
+      if (!active) return
+      if (guests.error || litters.error || payments.error) { setError(guests.error?.message || litters.error?.message || payments.error?.message); return }
+      setRows((guests.data || []).map(guest => {
+        const litter = (litters.data || []).find(l => String(l.id) === String(guest.litter_id))
+        return { ...guest, litter, summary: paymentSummary((payments.data || []).filter(p => String(p.waitlist_id) === String(guest.id)), litter?.birth_date || litter?.born_date) }
+      }))
+    })
+    return () => { active = false }
+  }, [])
+  const visible = rows.filter(row => filter === 'all' || (filter === 'due' ? row.summary.dueNow > 0 : row.summary.balance > 0))
+  return <div>
+    <h3 style={{ marginBottom: 6 }}>Payments</h3>
+    <p style={{ color: '#666', marginBottom: 12 }}>Deposit due now reflects the litter stage. Remaining balance is based on the $1,500 total.</p>
+    <select aria-label="Payment filter" style={{ ...inputStyle, maxWidth: 210, marginBottom: 12 }} value={filter} onChange={e => setFilter(e.target.value)}><option value="due">Deposit due now</option><option value="balance">Any balance remaining</option><option value="all">Everyone</option></select>
+    {error && <p style={{ color: '#b91c1c' }}>{error}</p>}
+    {visible.map(row => <div key={row.id} style={{ background: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 8 }}>
+      <strong>{row.name}</strong> <span style={{ color: '#666' }}>· {row.litter?.name || 'No litter'} · {row.email}</span>
+      <GuestPayments guest={row} litter={row.litter} />
+    </div>)}
+    {!error && !visible.length && <p>No guests match this filter.</p>}
+  </div>
+}
+
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
   const [settingsInitialView, setSettingsInitialView] = useState('email')
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'users', 'files', 'email campaigns', 'settings']
+  const [bornNotice, setBornNotice] = useState(null)
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'payments', 'applications', 'users', 'files', 'email campaigns', 'settings']
 
   return (
     <div>
@@ -3384,13 +3495,21 @@ function AdminDashboard() {
         ))}
       </div>
       {tab === 'puppies' && <PuppiesTab />}
-      {tab === 'litters' && <LittersTab />}
+      {tab === 'litters' && <LittersTab onBorn={notice => { setBornNotice(notice); setTab('email campaigns') }} />}
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
+      {tab === 'payments' && <PaymentsTab />}
       {tab === 'applications' && <ApplicationsTab />}
       {tab === 'users' && <UsersTab />}
       {tab === 'files' && <AdminFiles onOpenCleanup={() => { setSettingsInitialView('tools'); setTab('settings') }} />}
-      {tab === 'email campaigns' && <AdminCampaigns />}
+      {tab === 'email campaigns' && <>
+        {bornNotice && <div role="dialog" aria-label="Litter birth email reminder" style={{ position: 'fixed', inset: 0, zIndex: 1000, background: '#0008', display: 'grid', placeItems: 'center', padding: 20 }}><div style={{ maxWidth: 500, background: '#fff', borderRadius: 12, padding: 24 }}>
+          <h3>{bornNotice.name} has a born date</h3>
+          <p style={{ margin: '12px 0' }}>Send the birth announcement to this litter's waitlist. Remind guests with a $100 pre-litter deposit that the next $400 is due. Review recipients and payment records before sending.</p>
+          <button onClick={() => setBornNotice(null)} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>Continue to email campaigns</button>
+        </div></div>}
+        <AdminCampaigns initialLitterId={bornNotice?.id} />
+      </>}
       {tab === 'settings' && <SettingsTab initialView={settingsInitialView} />}
     </div>
   )

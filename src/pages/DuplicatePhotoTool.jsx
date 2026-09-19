@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { linkPuppyPhotoToExplorer, scanPuppyPhotoDuplicates } from '../lib/duplicatePhotos'
+import { estimatedTimeRemaining } from '../lib/progressEta'
 import './DuplicatePhotoTool.css'
 
 export default function DuplicatePhotoTool() {
@@ -7,15 +8,21 @@ export default function DuplicatePhotoTool() {
   const [chosen, setChosen] = useState({})
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  const [progress, setProgress] = useState(null)
+  const [cancelling, setCancelling] = useState(false)
+  const scanController = useRef(null)
 
   async function scan() {
-    setBusy(true); setStatus('Finding photos...'); setMatches([]); setChosen({})
+    const startedAt = Date.now()
+    const controller = new AbortController()
+    scanController.current = controller
+    setBusy(true); setCancelling(false); setStatus(''); setMatches([]); setChosen({}); setProgress({ completed: 0, total: 0, label: 'Finding photos', eta: 'Estimating…' })
     try {
-      const found = await scanPuppyPhotoDuplicates(setStatus)
+      const found = await scanPuppyPhotoDuplicates(value => setProgress({ ...value, eta: estimatedTimeRemaining(startedAt, value.completed, value.total) }), controller.signal)
       setMatches(found)
       setStatus(found.length ? `${found.length} possible duplicate photo references found. Review each match before linking.` : 'No matching puppy photos found.')
-    } catch (error) { setStatus(`Scan failed: ${error.message}`) }
-    setBusy(false)
+    } catch (error) { setStatus(controller.signal.aborted ? 'Scan cancelled.' : `Scan failed: ${error.message}`) }
+    scanController.current = null; setProgress(null); setCancelling(false); setBusy(false)
   }
 
   async function apply(match) {
@@ -33,6 +40,7 @@ export default function DuplicatePhotoTool() {
     <div className="duplicate-tool-header"><div><span className="duplicate-eyebrow">PHOTO LIBRARY</span><h4>Clean up duplicate puppy photos</h4><p>Find possible matches in Files, compare them side by side, then link the one you want to keep. Nothing is removed during the scan.</p></div><button type="button" className="duplicate-scan-button" onClick={scan} disabled={busy}>{busy ? 'Scanning...' : matches.length ? 'Scan again' : 'Find matches'}</button></div>
     <div className="duplicate-steps"><span><b>1</b> Scan photos</span><span><b>2</b> Review matches</span><span><b>3</b> Link and clean up</span></div>
     {status && <p role="status" className="duplicate-status">{status}</p>}
+    {progress && <div role="status" className="duplicate-status duplicate-progress"><div><span>{cancelling ? 'Cancelling scan…' : `${progress.label} · ${progress.total ? `${progress.completed} of ${progress.total}` : 'Preparing'} · ${progress.eta}`}</span><strong>{progress.total ? `${Math.round(progress.completed / progress.total * 100)}%` : ''}</strong></div><progress value={progress.total ? progress.completed : undefined} max={progress.total || 1} aria-label="Duplicate photo scan progress" /><button type="button" disabled={cancelling} onClick={() => { scanController.current?.abort(); setCancelling(true) }}>Cancel scan</button></div>}
     {matches.length > 0 && <div className="duplicate-results-heading"><strong>Possible matches</strong><span>{matches.length} to review</span></div>}
     <div className="duplicate-results">{matches.map((match, index) => {
       const key = `${match.kind}:${match.id}`

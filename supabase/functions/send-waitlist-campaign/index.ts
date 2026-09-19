@@ -25,9 +25,11 @@ serve(async req => {
     const subject = String(payload.subject || '').trim()
     const message = String(payload.message || '').trim()
     const audience = String(payload.audience || 'waitlists')
+    const customRecipients = payload.recipients
     const litterId = audience.startsWith('litter:') ? audience.slice(7) : null
     if (!subject || subject.length > 300 || !message || message.length > 20000) return reply({ error: 'Invalid subject or message' }, 400)
-    if (!['waitlists', 'everyone', 'applicants'].includes(audience) && !litterId) return reply({ error: 'Invalid audience' }, 400)
+    if (!['waitlists', 'everyone', 'applicants', 'custom'].includes(audience) && !litterId) return reply({ error: 'Invalid audience' }, 400)
+    if (audience === 'custom' && (!Array.isArray(customRecipients) || customRecipients.length > 1000 || customRecipients.some(email => typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())))) return reply({ error: 'Invalid email addresses' }, 400)
     if (litterId && !/^\d+$/.test(String(litterId))) return reply({ error: 'Invalid litter' }, 400)
     if (litterId) {
       const { data: litter } = await db.from('litters').select('id').eq('id', litterId).maybeSingle()
@@ -36,7 +38,10 @@ serve(async req => {
 
     // Page through each source so the database default row limit never drops recipients.
     const addresses = new Set<string>()
-    for (const table of audience === 'everyone' ? ['waitlist', 'applications'] : audience === 'applicants' ? ['applications'] : ['waitlist']) {
+    if (audience === 'custom') {
+      for (const email of customRecipients) addresses.add(email.trim().toLowerCase())
+    }
+    for (const table of audience === 'custom' ? [] : audience === 'everyone' ? ['waitlist', 'applications'] : audience === 'applicants' ? ['applications'] : ['waitlist']) {
       for (let offset = 0; ; offset += 1000) {
         let query = db.from(table).select('email').order('id').range(offset, offset + 999)
         if (litterId) query = query.eq('litter_id', litterId)
