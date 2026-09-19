@@ -1,9 +1,9 @@
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { renderCampaignMarkdown } from '../_shared/campaignMarkdown.js'
 
 const headers = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type', 'Content-Type': 'application/json' }
 const reply = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers })
-const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] || c)
 
 serve(async req => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers })
@@ -52,7 +52,7 @@ serve(async req => {
     if (addresses.size > 1000) return reply({ error: 'This group is too large to send in one campaign.' }, 400)
 
     const from = Deno.env.get('RESEND_FROM_EMAIL') || 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>'
-    const html = `<p>${escapeHtml(message).replace(/\n/g, '<br />')}</p>`
+    const html = renderCampaignMarkdown(message)
     let sent = 0
     let failed = 0
     const recipients = [...addresses]
