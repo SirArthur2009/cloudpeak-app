@@ -7,6 +7,13 @@ export function isImageFile(file) {
   return file.type?.startsWith('image/') || IMAGE_EXTENSION.test(file.name)
 }
 
+export const isHeicFile = file => /\.(heic|heif)$/i.test(file.name) || /^image\/hei[cf]$/i.test(file.type || file.content_type)
+
+export async function browserPreviewBlob(blob, file) {
+  if (!isHeicFile({ name: file.name, type: file.content_type || blob.type })) return blob
+  return prepareExplorerFile(new File([blob], file.name, { type: file.content_type || blob.type }))
+}
+
 export async function prepareExplorerFile(file) {
   if (!isImageFile(file)) return file
   const stem = file.name.replace(/\.[^.]+$/, '')

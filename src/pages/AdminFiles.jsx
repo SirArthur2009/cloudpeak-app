@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as tus from 'tus-js-client'
-import { prepareExplorerFile } from '../lib/explorerImages'
+import { browserPreviewBlob, prepareExplorerFile } from '../lib/explorerImages'
 import { convertPhotosToPng } from '../lib/convertPhotosToPng'
 import './AdminFiles.css'
 
@@ -223,7 +223,7 @@ export default function AdminFiles({ onOpenCleanup }) {
     try {
       const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
       if (error) throw error
-      const url = URL.createObjectURL(data)
+      const url = URL.createObjectURL(await browserPreviewBlob(data, file))
       if (request !== previewRequest.current) { URL.revokeObjectURL(url); return }
       setPreview({ name: file.name, url })
     } catch (error) {

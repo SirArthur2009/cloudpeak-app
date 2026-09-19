@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { browserPreviewBlob, isHeicFile } from '../lib/explorerImages'
 import './ImageLibraryPicker.css'
 
 export default function ImageLibraryPicker({ onChoose, onClose, multiple = false }) {
@@ -22,6 +23,7 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
 
   useEffect(() => {
     let active = true
+    const previewUrls = new Set()
     async function load() {
       const { data: folderData, error: folderError } = await supabase.from('admin_folders').select('id, parent_id, name').order('name')
       if (folderError) { if (active) { setError(folderError.message); setLoading(false) } return }
@@ -45,14 +47,27 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
       if (active) {
         if (signError) setError(signError.message)
         const privateUrls = new Map(privateImages.map((file, index) => [file.id, signed[index]?.signedUrl]))
-        setItems(images.map(file => ({ ...file, previewUrl: file.storage_bucket && file.storage_bucket !== 'admin-files'
+        setItems(images.map(file => ({ ...file, previewUrl: isHeicFile(file) ? null : file.storage_bucket && file.storage_bucket !== 'admin-files'
           ? supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
-          : privateUrls.get(file.id) })))
+          : privateUrls.get(file.id), previewPending: isHeicFile(file) })))
         setLoading(false)
+      }
+      for (const file of images.filter(isHeicFile)) {
+        if (!active) break
+        try {
+          const { data, error: downloadError } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          if (downloadError) throw downloadError
+          const url = URL.createObjectURL(await browserPreviewBlob(data, file))
+          if (!active) { URL.revokeObjectURL(url); break }
+          previewUrls.add(url)
+          setItems(current => current.map(item => item.id === file.id ? { ...item, previewUrl: url, previewPending: false } : item))
+        } catch (previewError) {
+          if (active) setItems(current => current.map(item => item.id === file.id ? { ...item, previewPending: false, previewError: previewError.message } : item))
+        }
       }
     }
     load()
-    return () => { active = false }
+    return () => { active = false; for (const url of previewUrls) URL.revokeObjectURL(url) }
   }, [])
 
   useEffect(() => {
@@ -108,7 +123,7 @@ export default function ImageLibraryPicker({ onChoose, onClose, multiple = false
       {error && <p className="image-library-error" role="alert">{error}</p>}
       {loading ? <p className="image-library-empty">Loading images…</p> : visible.length === 0 ? <p className="image-library-empty">No images found. Upload an image in Files first.</p> :
         <div className="image-library-grid">{visible.map((file, index) => <button type="button" className={selectedIds.includes(file.id) ? 'selected' : ''} key={file.id} onPointerDown={event => startSelection(event, index)} onPointerEnter={event => extendSelection(event, index)} onClick={() => clickItem(file)} disabled={busy} title={file.name} aria-pressed={multiple ? selectedIds.includes(file.id) : undefined}>
-          {file.previewUrl ? <img src={file.previewUrl} alt="" loading="lazy" draggable="false" /> : <span className="image-library-placeholder">Image</span>}
+          {file.previewUrl ? <img src={file.previewUrl} alt="" loading="lazy" draggable="false" /> : <span className="image-library-placeholder" title={file.previewError}>{file.previewPending ? 'Converting HEIC…' : file.previewError ? 'Preview unavailable' : 'Image'}</span>}
           <span className="image-library-card-caption">{multiple && <span className="image-library-check" aria-hidden="true">{selectedIds.includes(file.id) ? '✓' : ''}</span>} <strong>{file.name}</strong><small>{folderPath(file.folder_id)}</small></span>
         </button>)}</div>}
       {multiple && <div className="image-library-footer"><span>{selectedIds.length} selected · Drag across photos or tap to select</span><button type="button" disabled={busy || !selectedIds.length} onClick={() => choose(items.filter(file => selectedIds.includes(file.id)))}>Add selected photos</button></div>}
