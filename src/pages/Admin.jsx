@@ -5,6 +5,11 @@ import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 import AdminFiles from './AdminFiles'
 import AdminCampaigns from './AdminCampaigns'
+import ImageLibraryPicker from './ImageLibraryPicker'
+import DuplicatePhotoTool from './DuplicatePhotoTool'
+import { publishExplorerImage } from '../lib/explorerImages'
+import { auditPuppyImages, checkCandidateImage, findImageMatch, signaturesForPhotos } from '../lib/puppyImageChecks'
+import { signature } from '../lib/duplicatePhotos'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -107,7 +112,7 @@ async function browserReadablePhoto(file) {
 }
 
 // ── Single photo upload with crop ──
-function PhotoUpload({ value, onChange, bucket }) {
+function PhotoUpload({ value, onChange, bucket, beforeUse }) {
   const fileRef = useRef()
   const [uploading, setUploading] = useState(false)
   const [cropSrc, setCropSrc] = useState(null)
@@ -115,6 +120,7 @@ function PhotoUpload({ value, onChange, bucket }) {
   const [zoom, setZoom] = useState(1)
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null)
   const [Cropper, setCropper] = useState(null)
+  const [showLibrary, setShowLibrary] = useState(false)
 
   useEffect(() => {
     import('react-easy-crop').then(m => setCropper(() => m.default))
@@ -156,6 +162,7 @@ function PhotoUpload({ value, onChange, bucket }) {
     setUploading(true)
     try {
       const blob = await getCroppedBlob(cropSrc, croppedAreaPixels)
+      if (beforeUse) await beforeUse(blob)
       const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
       const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: 'image/jpeg' })
       if (error) throw error
@@ -163,7 +170,7 @@ function PhotoUpload({ value, onChange, bucket }) {
       onChange(data.publicUrl)
       setCropSrc(null)
     } catch (err) {
-      alert('Upload failed: ' + err.message)
+      alert('Photo not added: ' + err.message)
     }
     setUploading(false)
   }
@@ -192,15 +199,24 @@ function PhotoUpload({ value, onChange, bucket }) {
         <button type="button" onClick={() => fileRef.current.click()} style={{ ...btnStyle, background: '#f0f0f0', border: '1px solid #ddd', fontSize: '0.85rem', padding: '0.5rem 0.8rem' }}>
           {value ? 'Change Photo' : 'Upload Photo'}
         </button>
+        <button type="button" onClick={() => setShowLibrary(true)} style={{ ...btnStyle, background: '#eef3f6', border: '1px solid #cad8df', fontSize: '0.85rem', padding: '0.5rem 0.8rem' }}>Choose from Files</button>
         {value && <button type="button" onClick={() => onChange('')} style={{ ...btnStyle, background: '#fff0f0', color: '#c00', border: '1px solid #fcc', fontSize: '0.85rem', padding: '0.5rem 0.8rem' }}>Remove</button>}
       </div>
       <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+      {showLibrary && <ImageLibraryPicker onClose={() => setShowLibrary(false)} onChoose={async file => {
+        if (beforeUse) {
+          const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          if (error) throw error
+          await beforeUse(data)
+        }
+        onChange(await publishExplorerImage(file, bucket))
+      }} />}
     </div>
   )
 }
 
 // ── Multi-photo manager for puppy_photos table ──
-function PuppyPhotosManager({ puppyId }) {
+function PuppyPhotosManager({ puppyId, coverUrl }) {
   const [photos, setPhotos] = useState([])
   const [loading, setLoading] = useState(true)
   const [caption, setCaption] = useState('')
@@ -211,6 +227,10 @@ function PuppyPhotosManager({ puppyId }) {
   const [croppedAreaPixels, setCroppedAreaPixels] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [Cropper, setCropper] = useState(null)
+  const [showLibrary, setShowLibrary] = useState(false)
+  const [auditPairs, setAuditPairs] = useState([])
+  const [auditStatus, setAuditStatus] = useState('')
+  const [auditBusy, setAuditBusy] = useState(false)
   const fileRef = useRef()
   const videoRef = useRef()
 
@@ -251,6 +271,36 @@ function PuppyPhotosManager({ puppyId }) {
       .order('created_at')
     setPhotos(data || [])
     setLoading(false)
+    await checkExistingPhotos(data || [])
+  }
+
+  async function galleryReferences() {
+    const { data, error } = await supabase.from('puppy_photos').select('photo_url').eq('puppy_id', puppyId).order('sort_order')
+    if (error) throw error
+    return [
+      ...(coverUrl ? [{ url: coverUrl, label: 'cover photo' }] : []),
+      ...(data || []).map((row, index) => ({ url: row.photo_url, label: `gallery photo ${index + 1}` }))
+    ]
+  }
+
+  async function checkGalleryCandidate(blob) {
+    const { match } = await checkCandidateImage(blob, await galleryReferences())
+    if (match?.kind === 'exact') throw new Error(`This image is already used as ${match.label}.`)
+    if (match?.kind === 'similar' && !confirm(`This looks very similar to ${match.label}. Add it anyway?`)) throw new Error('Photo was not added.')
+  }
+
+  async function checkExistingPhotos(gallery = photos) {
+    setAuditBusy(true); setAuditStatus('Checking existing photos...')
+    try {
+      const references = [
+        ...(coverUrl ? [{ url: coverUrl, label: 'Cover photo' }] : []),
+        ...gallery.map((photo, index) => ({ url: photo.photo_url, label: `Gallery photo ${index + 1}` }))
+      ]
+      const pairs = await auditPuppyImages(references)
+      setAuditPairs(pairs)
+      setAuditStatus(pairs.length ? `${pairs.length} possible duplicate pair${pairs.length === 1 ? '' : 's'} found.` : 'No duplicate images found for this puppy.')
+    } catch (error) { setAuditStatus(`Could not finish checking photos: ${error.message}`) }
+    setAuditBusy(false)
   }
 
   // When files are selected, load them all into the crop queue
@@ -306,6 +356,7 @@ function PuppyPhotosManager({ puppyId }) {
     try {
       const current = cropQueue[cropIndex]
       const blob = await getCroppedBlob(current.dataUrl, croppedAreaPixels)
+      await checkGalleryCandidate(blob)
       const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
       const { error } = await supabase.storage.from('puppy-photos').upload(path, blob, { contentType: 'image/jpeg' })
       if (error) throw error
@@ -335,7 +386,7 @@ function PuppyPhotosManager({ puppyId }) {
         await fetchPhotos()
       }
     } catch (err) {
-      alert('Upload failed: ' + err.message)
+      alert('Photo not added: ' + err.message)
     }
     setUploading(false)
   }
@@ -345,6 +396,7 @@ function PuppyPhotosManager({ puppyId }) {
     setUploading(true)
     try {
       const current = cropQueue[cropIndex]
+      await checkGalleryCandidate(current.file)
       const url = await uploadFile('puppy-photos', current.file)
       const { error: insertError } = await supabase.from('puppy_photos').insert({
         puppy_id: puppyId,
@@ -366,7 +418,7 @@ function PuppyPhotosManager({ puppyId }) {
         await fetchPhotos()
       }
     } catch (err) {
-      alert('Upload failed: ' + err.message)
+      alert('Photo not added: ' + err.message)
     }
     setUploading(false)
   }
@@ -492,13 +544,42 @@ function PuppyPhotosManager({ puppyId }) {
           + Select Photos
         </button>
         <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFilesSelected} />
+        <button type="button" disabled={uploading} onClick={() => setShowLibrary(true)} style={{ ...btnStyle, background: '#eef3f6', border: '1px solid #cad8df', padding: '0.65rem' }}>Choose from Files</button>
         <button type="button" disabled={uploading} onClick={() => videoRef.current.click()} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.65rem' }}>
           {uploading ? 'Uploading...' : '+ Select Videos'}
         </button>
         <input ref={videoRef} type="file" accept="video/mp4,video/webm,video/quicktime,.mov" multiple style={{ display: 'none' }} onChange={handleVideoSelected} />
       </div>
+      {showLibrary && <ImageLibraryPicker multiple onClose={() => setShowLibrary(false)} onChoose={async selectedFiles => {
+        const existing = await signaturesForPhotos(await galleryReferences())
+        const pending = []
+        for (const file of selectedFiles) {
+          const { data, error: downloadError } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          if (downloadError) throw downloadError
+          const candidate = await signature(data)
+          const match = findImageMatch(candidate, [...existing, ...pending])
+          if (match?.kind === 'exact') throw new Error(`${file.name} is already used as ${match.label}. Remove it from your selection.`)
+          if (match?.kind === 'similar' && !confirm(`${file.name} looks very similar to ${match.label}. Add it anyway?`)) throw new Error('No photos were added.')
+          pending.push({ signature: candidate, label: file.name })
+        }
+        const urls = []
+        for (const file of selectedFiles) urls.push(await publishExplorerImage(file, 'puppy-photos'))
+        const { error } = await supabase.from('puppy_photos').insert(urls.map((url, index) => ({ puppy_id: puppyId, photo_url: url, caption: null, sort_order: photos.length + index + 1 })))
+        if (error) throw error
+        await fetchPhotos()
+      }} />}
 
       {/* Photo list */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap' }}>
+        <strong style={{ fontSize: '0.9rem' }}>Existing photos</strong>
+        <button type="button" disabled={auditBusy || uploading} onClick={() => checkExistingPhotos()} style={{ ...btnStyle, border: '1px solid #d4dfe3', background: '#fff', color: '#3b6175', fontSize: '0.8rem' }}>{auditBusy ? 'Checking...' : 'Check duplicates again'}</button>
+      </div>
+      {auditStatus && <p role="status" style={{ fontSize: '0.8rem', color: auditPairs.length ? '#9b5a22' : '#627985', background: auditPairs.length ? '#fff6e8' : '#f1f6f8', padding: '0.65rem 0.8rem', borderRadius: '7px' }}>{auditStatus}</p>}
+      {auditPairs.map((pair, index) => <div key={`${pair.first.url}-${pair.second.url}-${index}`} style={{ display: 'flex', alignItems: 'center', gap: '0.7rem', padding: '0.7rem', border: '1px solid #efd8aa', borderRadius: '8px', background: '#fffaf1', flexWrap: 'wrap' }}>
+        <img src={pair.first.url} alt={pair.first.label} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
+        <img src={pair.second.url} alt={pair.second.label} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6 }} />
+        <span style={{ fontSize: '0.8rem', color: '#704f28' }}>{pair.first.label} and {pair.second.label} {pair.kind === 'exact' ? 'are identical' : 'look very similar'}. Review them below before removing either.</span>
+      </div>)}
       {loading && <p style={{ color: '#888', fontSize: '0.85rem' }}>Loading photos...</p>}
       {!loading && photos.length === 0 && <p style={{ color: '#aaa', fontSize: '0.85rem' }}>No photos yet.</p>}
       {photos.map((ph, i) => (
@@ -708,6 +789,18 @@ function PuppiesTab() {
     setForm({ name: '', gender: '', color: '', collar_color: '', status: 'available', litter_id: '', notes: '', photo_url: '' })
   }
 
+  async function checkCoverImage(blob) {
+    const references = form.photo_url ? [{ url: form.photo_url, label: 'current cover photo' }] : []
+    if (editing && editing !== 'new') {
+      const { data, error } = await supabase.from('puppy_photos').select('photo_url').eq('puppy_id', editing)
+      if (error) throw error
+      references.push(...(data || []).map((row, index) => ({ url: row.photo_url, label: `gallery photo ${index + 1}` })))
+    }
+    const { match } = await checkCandidateImage(blob, references)
+    if (match?.kind === 'exact') throw new Error(`This image is already used as ${match.label}.`)
+    if (match?.kind === 'similar' && !confirm(`This looks very similar to ${match.label}. Use it anyway?`)) throw new Error('Photo was not added.')
+  }
+
   async function handleSave() {
     setSaving(true)
     setMessage('')
@@ -827,7 +920,7 @@ function PuppiesTab() {
                 </div>
                 <div>
                   <label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '0.4rem' }}>Cover photo (thumbnail)</label>
-                  <PhotoUpload value={form.photo_url} onChange={url => setForm({ ...form, photo_url: url })} bucket="puppy-photos" />
+                  <PhotoUpload value={form.photo_url} onChange={url => setForm(current => ({ ...current, photo_url: url }))} bucket="puppy-photos" beforeUse={checkCoverImage} />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <CollarColorPicker value={form.collar_color} onChange={val => setForm({ ...form, collar_color: val })} />
@@ -849,7 +942,7 @@ function PuppiesTab() {
               <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '1rem' }}>
                 Add as many photos as you like. The first photo (or cover photo from Details) is used as the thumbnail in the gallery. All photos appear on the puppy's individual page.
               </p>
-              <PuppyPhotosManager puppyId={editing} />
+              <PuppyPhotosManager puppyId={editing} coverUrl={form.photo_url} />
               <div style={{ marginTop: '1rem' }}>
                 <button onClick={() => setEditing(null)} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.65rem 1.5rem' }}>Done</button>
               </div>
@@ -1113,7 +1206,7 @@ function DogsTab() {
           <FormGrid>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Name</label><input style={inputStyle} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Registration #</label><input style={inputStyle} value={form.registration_number} onChange={e => setForm({ ...form, registration_number: e.target.value })} /></div>
-            <div><label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '0.4rem' }}>Photo</label><PhotoUpload value={form.photo_url} onChange={url => setForm({ ...form, photo_url: url })} bucket="dog-photos" /></div>
+            <div><label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '0.4rem' }}>Photo</label><PhotoUpload value={form.photo_url} onChange={url => setForm(current => ({ ...current, photo_url: url }))} bucket="dog-photos" /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>Embark URL</label><input style={inputStyle} value={form.embark_url} onChange={e => setForm({ ...form, embark_url: e.target.value })} placeholder="http://embk.me/..." /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666' }}>OFA URL</label><input style={inputStyle} value={form.ofa_url} onChange={e => setForm({ ...form, ofa_url: e.target.value })} /></div>
             <div><label style={{ fontSize: '0.8rem', color: '#666', display: 'block', marginBottom: '0.4rem' }}>Pedigree file</label><PedigreeUpload value={form.pedigree_url} onChange={url => setForm({ ...form, pedigree_url: url })} /></div>
@@ -3199,11 +3292,11 @@ function EmailTab() {
   )
 }
 
-function SettingsTab() {
+function SettingsTab({ initialView = 'email' }) {
   const [sending, setSending] = useState(false)
   const [message, setMessage] = useState('')
   const [failures, setFailures] = useState([])
-  const [settingsView, setSettingsView] = useState('email')
+  const [settingsView, setSettingsView] = useState(initialView)
 
   async function handleResendAllApplications() {
     if (!confirm('Resend email notifications for all puppy applications?')) return
@@ -3286,6 +3379,7 @@ function SettingsTab() {
           </div>
         )}
       </div>
+      <DuplicatePhotoTool />
       </>}
     </div>
   )
@@ -3294,6 +3388,7 @@ function SettingsTab() {
 // ── ADMIN DASHBOARD SHELL ──
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
+  const [settingsInitialView, setSettingsInitialView] = useState('email')
   const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'users', 'files', 'email campaigns', 'settings']
 
   return (
@@ -3314,9 +3409,9 @@ function AdminDashboard() {
       {tab === 'waitlist' && <WaitlistTab />}
       {tab === 'applications' && <ApplicationsTab />}
       {tab === 'users' && <UsersTab />}
-      {tab === 'files' && <AdminFiles />}
+      {tab === 'files' && <AdminFiles onOpenCleanup={() => { setSettingsInitialView('tools'); setTab('settings') }} />}
       {tab === 'email campaigns' && <AdminCampaigns />}
-      {tab === 'settings' && <SettingsTab />}
+      {tab === 'settings' && <SettingsTab initialView={settingsInitialView} />}
     </div>
   )
 }
