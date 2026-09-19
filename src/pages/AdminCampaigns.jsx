@@ -28,7 +28,10 @@ export default function AdminCampaigns({ initialLitterId = null }) {
   const [litters, setLitters] = useState([])
   const [templates, setTemplates] = useState([])
   const [audience, setAudience] = useState(initialLitterId ? `litter:${initialLitterId}` : 'waitlists')
-  const [sender, setSender] = useState('admin')
+  const [sender, setSender] = useState('levi')
+  const [customSenderName, setCustomSenderName] = useState('')
+  const [customSenderEmail, setCustomSenderEmail] = useState('')
+  const [replyTo, setReplyTo] = useState('')
   const [customRecipients, setCustomRecipients] = useState('')
   const [count, setCount] = useState(0)
   const [subject, setSubject] = useState('')
@@ -130,10 +133,15 @@ export default function AdminCampaigns({ initialLitterId = null }) {
     if (!confirm(`Send this email to approximately ${count} unique addresses?`)) return
     setBusy(true); setMessage('Sending...')
     const { data, error } = await supabase.functions.invoke('send-waitlist-campaign', {
-      body: { audience, sender, recipients: audience === 'custom' ? [...new Set(recipients)] : undefined, subject: subject.trim(), message: body.trim() }
+      body: { audience, sender, custom_sender_name: customSenderName.trim(), custom_sender_email: customSenderEmail.trim(), reply_to: replyTo.trim() || undefined, recipients: audience === 'custom' ? [...new Set(recipients)] : undefined, subject: subject.trim(), message: body.trim() }
     })
     setBusy(false)
-    setMessage(error?.message || data?.error || `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`)
+    let detail = data?.error || data?.errors?.[0]
+    if (error?.context?.json) {
+      const response = await error.context.json().catch(() => null)
+      detail = response?.error || response?.errors?.[0] || detail
+    }
+    setMessage(detail || error?.message || `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`)
   }
   return <section style={{ maxWidth: 760 }}>
     <h3>Email campaigns</h3>
@@ -152,7 +160,9 @@ export default function AdminCampaigns({ initialLitterId = null }) {
       <span style={{ color: '#666' }}>Each address receives a separate email. Duplicate addresses are sent once.</span>
     </label>}
     <p>{count} unique email {count === 1 ? 'address' : 'addresses'}</p>
-    <label>From<select style={field} value={sender} onChange={e => setSender(e.target.value)}><option value="admin">Admin</option><option value="levi">Levi</option><option value="leah">Leah</option><option value="owner">Owner</option><option value="noreply">No reply</option></select></label>
+    <label>From<select style={field} value={sender} onChange={e => setSender(e.target.value)}><option value="levi">Levi</option><option value="leah">Leah</option><option value="noreply">No reply</option><option value="custom">Custom</option></select></label>
+    {sender === 'custom' && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><label style={{ flex: '1 1 180px' }}>Sender name<input style={field} value={customSenderName} onChange={e => setCustomSenderName(e.target.value)} placeholder="Name shown to recipients" /></label><label style={{ flex: '2 1 260px' }}>Sender email<input type="email" style={field} value={customSenderEmail} onChange={e => setCustomSenderEmail(e.target.value)} placeholder="hello@cloudpeaksilverlabradors.com" /></label></div>}
+    <label>Reply-to email (optional)<input type="email" style={field} value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="Where replies should go" /></label>
     <label>Saved template<select style={field} value={selectedTemplate} onChange={e => {
       const id = e.target.value; setSelectedTemplate(id)
       const template = templates.find(t => t.id === id)

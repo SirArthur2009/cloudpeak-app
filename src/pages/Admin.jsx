@@ -11,6 +11,7 @@ import { prepareExplorerFile, publishExplorerImage } from '../lib/explorerImages
 import { auditPuppyImages, checkCandidateImage, findImageMatch, signaturesForPhotos } from '../lib/puppyImageChecks'
 import { signature } from '../lib/duplicatePhotos'
 import { estimatedTimeRemaining } from '../lib/progressEta'
+import { renderCampaignMarkdown } from '../../supabase/functions/_shared/campaignMarkdown'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -98,7 +99,7 @@ async function uploadFile(bucket, file) {
 const paymentTypes = {
   pre_litter_deposit: ['Pre-litter deposit', 100],
   post_litter_deposit: ['Post-litter deposit', 400],
-  born_litter_deposit: ['New deposit after birth', 550],
+  born_litter_deposit: ['New deposit after birth', 500],
   final_payment: ['Final payment', 1000],
   full_payment: ['Paid in full', 1500],
   other: ['Other payment', '']
@@ -106,18 +107,18 @@ const paymentTypes = {
 const money = amount => `$${Number(amount || 0).toFixed(2)}`
 function paymentSummary(payments, born) {
   const paid = payments.reduce((sum, p) => sum + Number(p.amount), 0)
-  const startedBeforeBirth = payments.some(p => p.payment_type === 'pre_litter_deposit' || p.payment_type === 'post_litter_deposit')
-  const depositTarget = born ? (startedBeforeBirth ? 500 : 550) : 100
+  const depositTarget = born ? 500 : 100
   return { paid, dueNow: Math.max(0, depositTarget - paid), balance: Math.max(0, 1500 - paid) }
 }
 
-function GuestPayments({ guest, litter, compact = false }) {
+function GuestPayments({ guest, litter, compact = false, expanded, onClose, showTrigger = true }) {
   const [payments, setPayments] = useState([])
   const [type, setType] = useState(litter?.birth_date || litter?.born_date ? 'born_litter_deposit' : 'pre_litter_deposit')
-  const [amount, setAmount] = useState(litter?.birth_date || litter?.born_date ? '550' : '100')
+  const [amount, setAmount] = useState(litter?.birth_date || litter?.born_date ? '500' : '100')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [note, setNote] = useState('')
   const [open, setOpen] = useState(false)
+  const isOpen = expanded === undefined ? open : expanded
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   useEffect(() => {
@@ -135,15 +136,15 @@ function GuestPayments({ guest, litter, compact = false }) {
     const { data: { user } } = await supabase.auth.getUser()
     const { data, error: saveError } = await supabase.from('guest_payments').insert({ waitlist_id: guest.id, payment_type: type, amount: value, paid_at: date, note: note.trim(), recorded_by: user?.id }).select().single()
     if (saveError) setError(saveError.message)
-    else { setPayments(current => [data, ...current]); setNote(''); setOpen(false) }
+    else { setPayments(current => [data, ...current]); setNote(''); if (onClose) onClose(); else setOpen(false) }
     setBusy(false)
   }
   return <div style={{ fontSize: '0.8rem', marginTop: '0.45rem' }}>
     <span style={{ color: summary.dueNow ? '#a63b16' : '#24703c', fontWeight: 600 }}>{summary.dueNow ? `${money(summary.dueNow)} due now` : 'Deposit current'}</span>
     <span style={{ color: '#666' }}> · {money(summary.paid)} paid · {money(summary.balance)} total remaining</span>
-    <button type="button" onClick={() => setOpen(!open)} style={{ ...btnStyle, marginLeft: '0.5rem', padding: '0.2rem 0.5rem', background: '#eef2ff', color: '#3730a3', fontSize: '0.75rem' }}>{open ? 'Close' : 'Record payment / history'}</button>
+    {showTrigger && <button type="button" onClick={() => setOpen(!open)} style={{ ...btnStyle, marginLeft: '0.5rem', padding: '0.2rem 0.5rem', background: '#eef2ff', color: '#3730a3', fontSize: '0.75rem' }}>{open ? 'Close' : 'Record payment / history'}</button>}
     {error && <p style={{ color: '#b91c1c' }}>Payment error: {error}</p>}
-    {open && <div style={{ background: '#f8f8f8', border: '1px solid #ddd', borderRadius: 8, padding: 10, marginTop: 8 }}>
+    {isOpen && <div style={{ background: '#f8f8f8', border: '1px solid #ddd', borderRadius: 8, padding: 10, marginTop: 8 }}>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'end' }}>
         <label>Type<select style={inputStyle} value={type} onChange={e => { setType(e.target.value); setAmount(String(e.target.value === 'final_payment' ? summary.balance : paymentTypes[e.target.value][1])) }}>{Object.entries(paymentTypes).map(([key, [label]]) => <option key={key} value={key}>{label}</option>)}</select></label>
         <label>Amount<input type="number" min="0.01" step="0.01" style={{ ...inputStyle, width: 110 }} value={amount} onChange={e => setAmount(e.target.value)} /></label>
@@ -1303,6 +1304,7 @@ function WaitlistTab() {
   const [selectedLitterId, setSelectedLitterId] = useState('')
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
+  const [paymentEntryId, setPaymentEntryId] = useState(null)
   const [form, setForm] = useState({ name: '', email: '', phone: '', position: '', notes: '', password: '', litter_id: '' })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -1673,7 +1675,7 @@ function WaitlistTab() {
                 <span style={{ fontWeight: w.is_active || w.pending_approval ? 600 : 400 }}>{w.name}</span>
               </div>
               <p style={{ fontSize: '0.8rem', color: '#666' }}>{w.email}</p>
-              <GuestPayments guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} />
+              <GuestPayments guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} showTrigger={false} expanded={paymentEntryId === w.id} onClose={() => setPaymentEntryId(null)} />
               {w.phone && <p style={{ fontSize: '0.8rem', color: '#888' }}>{w.phone}</p>}
               <p style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
                 {w.pending_approval ? <span style={{ color: '#b36200', fontWeight: 600 }}>⏳ Pending approval</span>
@@ -1683,6 +1685,7 @@ function WaitlistTab() {
               </p>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flexShrink: 0 }}>
+              <button onClick={() => setPaymentEntryId(current => current === w.id ? null : w.id)} style={{ ...btnStyle, background: '#eef2ff', color: '#3730a3', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>{paymentEntryId === w.id ? 'Close payment' : 'Record payment'}</button>
               {(w.selected_puppy_id || w.pending_approval) && (
                 <button onClick={() => handleUnselect(w)} style={{ ...btnStyle, background: '#fff4e5', color: '#b36200', padding: '0.3rem 0.7rem', fontSize: '0.8rem' }}>Unselect</button>
               )}
@@ -2303,6 +2306,7 @@ function UsersTab() {
   const [passwordSaving, setPasswordSaving] = useState(false)
   const [resettingEmail, setResettingEmail] = useState(null)
   const [actionsUserEmail, setActionsUserEmail] = useState(null)
+  const [paymentEntryId, setPaymentEntryId] = useState(null)
 
   const [addingUser, setAddingUser] = useState(false)
   const [addForm, setAddForm] = useState({ name: '', email: '', phone: '', role: 'client', password: '', litter_id: '' })
@@ -2780,7 +2784,7 @@ function UsersTab() {
                     Waitlist: {u.waitlist_entries.map(w => `#${w.position}`).join(', ')}
                   </p>
                 )}
-                {u.waitlist_entries.map(w => <GuestPayments key={w.id} guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} />)}
+                {u.waitlist_entries.map(w => <GuestPayments key={w.id} guest={w} litter={litters.find(l => String(l.id) === String(w.litter_id))} showTrigger={false} expanded={paymentEntryId === w.id} onClose={() => setPaymentEntryId(null)} />)}
                 {u.applications.length > 0 && (
                   <p style={{ fontSize: '0.8rem', color: '#5555cc', marginTop: '0.15rem' }}>
                     {u.applications.length} Application(s) submitted
@@ -2791,6 +2795,7 @@ function UsersTab() {
               <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
                 <button onClick={() => setActionsUserEmail(current => current === u.email ? null : u.email)} aria-expanded={actionsUserEmail === u.email} style={{ ...btnStyle, background: '#f0f0f0', padding: '0.35rem 0.7rem' }}>More actions</button>
                 {actionsUserEmail === u.email && <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', width: '100%' }}>
+                {u.waitlist_entries.map(w => <button key={w.id} onClick={() => setPaymentEntryId(current => current === w.id ? null : w.id)} style={{ ...btnStyle, background: '#eef2ff', color: '#3730a3', border: '1px solid #c7d2fe', padding: '0.35rem 0.7rem', fontSize: '0.8rem' }}>{paymentEntryId === w.id ? 'Close payment' : `Record payment${u.waitlist_entries.length > 1 ? ` · ${litters.find(l => String(l.id) === String(w.litter_id))?.name || 'Litter'}` : ''}`}</button>)}
                 {u.phone && (
                   <a href={`tel:${u.phone}`} style={{ ...btnStyle, background: '#f8f8f8', border: '1px solid #ddd', color: '#333', fontSize: '0.8rem', textDecoration: 'none', padding: '0.35rem 0.7rem' }}>
                     Call
@@ -3017,6 +3022,47 @@ function ArchivedApplicationsTab() {
   )
 }
 
+function EmailMarkdownEditor({ value, onChange, inputRef, rows = 7, label = 'Message' }) {
+  const [textColor, setTextColor] = useState('#1769c2')
+  function insert(before, after = before, placeholder = 'text') {
+    const editor = inputRef.current
+    if (!editor) return
+    const start = editor.selectionStart
+    const end = editor.selectionEnd
+    const selected = value.slice(start, end) || placeholder
+    onChange(value.slice(0, start) + before + selected + after + value.slice(end))
+    requestAnimationFrame(() => { editor.focus(); editor.setSelectionRange(start + before.length, start + before.length + selected.length) })
+  }
+  function insertLink() {
+    const url = window.prompt('Link URL (https://...)')
+    if (!url) return
+    let parsed
+    try { parsed = new URL(url) } catch { return }
+    if (!['https:', 'http:'].includes(parsed.protocol)) return
+    const editor = inputRef.current
+    const start = editor.selectionStart
+    const end = editor.selectionEnd
+    const labelText = value.slice(start, end) || window.prompt('Link text', 'Click here') || 'Click here'
+    onChange(value.slice(0, start) + `[${labelText}](${parsed.href})` + value.slice(end))
+    requestAnimationFrame(() => editor.focus())
+  }
+  const toolButton = { ...btnStyle, padding: '0.4rem 0.6rem', background: '#f4f6f7', border: '1px solid #d5dfe4', fontSize: '0.8rem' }
+  return <div style={{ display: 'grid', gap: 8 }}>
+    <label htmlFor={label === 'Reply' ? 'reply-email-message' : 'compose-email-message'}>{label}</label>
+    <div role="toolbar" aria-label={`${label} formatting`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+      <button type="button" style={toolButton} onClick={() => insert('**', '**', 'bold text')}>Bold</button>
+      <button type="button" style={toolButton} onClick={() => insert('*', '*', 'italic text')}>Italic</button>
+      <button type="button" style={toolButton} onClick={() => insert('## ', '', 'Heading')}>Heading</button>
+      <button type="button" style={toolButton} onClick={() => insert('- ', '', 'List item')}>List</button>
+      <button type="button" style={toolButton} onClick={insertLink}>Link</button>
+      <label style={{ ...toolButton, display: 'inline-flex', alignItems: 'center', gap: 5 }}>Color <input type="color" aria-label="Choose text color" value={textColor} onChange={e => setTextColor(e.target.value)} style={{ width: 26, height: 24, padding: 0, border: 0 }} /></label>
+      <button type="button" style={toolButton} onClick={() => insert(`{color:${textColor}|`, '}', 'colored text')}>Apply color</button>
+    </div>
+    <textarea id={label === 'Reply' ? 'reply-email-message' : 'compose-email-message'} ref={inputRef} rows={rows} style={{ ...inputStyle, resize: 'vertical' }} value={value} onChange={e => onChange(e.target.value)} maxLength={20000} placeholder="Write your email. Use the toolbar for formatting." />
+    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, overflowWrap: 'anywhere' }}><strong style={{ fontSize: '0.8rem' }}>Preview</strong>{value.trim() ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderCampaignMarkdown(value)) }} /> : <p style={{ color: '#888', marginTop: 8 }}>Your message preview appears here.</p>}</div>
+  </div>
+}
+
 function EmailTab() {
   const [emails, setEmails] = useState([])
   const [contactsMap, setContactsMap] = useState(new Map())
@@ -3030,8 +3076,13 @@ function EmailTab() {
   const [viewFilter, setViewFilter] = useState('inbox') // 'inbox' or 'archived'
   const [composing, setComposing] = useState(false)
   const [compose, setCompose] = useState({ to: '', subject: '', message: '' })
-  const [sender, setSender] = useState('admin')
-  const senderOptions = [['admin', 'Admin'], ['levi', 'Levi'], ['leah', 'Leah'], ['owner', 'Owner'], ['noreply', 'No reply']]
+  const composeRef = useRef(null)
+  const [sender, setSender] = useState('levi')
+  const [customSenderName, setCustomSenderName] = useState('')
+  const [customSenderEmail, setCustomSenderEmail] = useState('')
+  const [replyTo, setReplyTo] = useState('')
+  const senderOptions = [['levi', 'Levi'], ['leah', 'Leah'], ['noreply', 'No reply'], ['custom', 'Custom']]
+  const senderDetails = { sender, custom_sender_name: customSenderName.trim(), custom_sender_email: customSenderEmail.trim(), reply_to: replyTo.trim() || undefined }
 
   async function fetchEmails() {
     setLoading(true)
@@ -3136,7 +3187,7 @@ function EmailTab() {
         to,
         subject: subject.startsWith('Re:') ? subject : `Re: ${subject}`,
         message: replyMessage,
-        sender,
+        ...senderDetails,
       })
       setReplyMessage('')
       if (result.email) {
@@ -3152,7 +3203,7 @@ function EmailTab() {
   async function handleCompose() {
     setSending(true); setSendError('')
     try {
-      await callFunction('send-email-reply', { ...compose, sender })
+      await callFunction('send-email-reply', { ...compose, ...senderDetails })
       setCompose({ to: '', subject: '', message: '' })
       setComposing(false)
       setViewFilter('sent')
@@ -3229,9 +3280,11 @@ function EmailTab() {
       {composing && <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16, marginBottom: 16, background: '#fff', display: 'grid', gap: 10 }}>
         <strong>New message</strong>
         <label>From<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+        {sender === 'custom' && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><label style={{ flex: '1 1 180px' }}>Sender name<input style={inputStyle} value={customSenderName} onChange={e => setCustomSenderName(e.target.value)} placeholder="Name shown to recipients" /></label><label style={{ flex: '2 1 260px' }}>Sender email<input type="email" style={inputStyle} value={customSenderEmail} onChange={e => setCustomSenderEmail(e.target.value)} placeholder="hello@cloudpeaksilverlabradors.com" /></label></div>}
+        <label>Reply-to email (optional)<input type="email" style={inputStyle} value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="Where replies should go" /></label>
         <label>To<input type="email" style={inputStyle} value={compose.to} onChange={e => setCompose({ ...compose, to: e.target.value })} /></label>
         <label>Subject<input style={inputStyle} value={compose.subject} onChange={e => setCompose({ ...compose, subject: e.target.value })} /></label>
-        <label>Message<textarea rows={7} style={inputStyle} value={compose.message} onChange={e => setCompose({ ...compose, message: e.target.value })} /></label>
+        <EmailMarkdownEditor value={compose.message} onChange={message => setCompose(current => ({ ...current, message }))} inputRef={composeRef} />
         {sendError && <p style={{ color: '#b91c1c' }}>{sendError}</p>}
         <div style={{ display: 'flex', gap: 8 }}><button disabled={sending || !compose.to || !compose.subject.trim() || !compose.message.trim()} onClick={handleCompose} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>Send</button><button onClick={() => setComposing(false)} style={btnStyle}>Discard</button></div>
       </div>}
@@ -3322,14 +3375,9 @@ function EmailTab() {
 
             {sendError && <p style={{ color: 'red', marginBottom: '0.5rem' }}>Error: {sendError}</p>}
             <label style={{ display: 'block', marginBottom: 8 }}>Reply from<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
-            <textarea
-              ref={replyRef}
-              value={replyMessage}
-              onChange={e => setReplyMessage(e.target.value)}
-              placeholder="Write a reply..."
-              rows={4}
-              style={{ ...inputStyle, marginBottom: '0.5rem', resize: 'vertical' }}
-            />
+            {sender === 'custom' && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}><label style={{ flex: '1 1 180px' }}>Sender name<input style={inputStyle} value={customSenderName} onChange={e => setCustomSenderName(e.target.value)} placeholder="Name shown to recipients" /></label><label style={{ flex: '2 1 260px' }}>Sender email<input type="email" style={inputStyle} value={customSenderEmail} onChange={e => setCustomSenderEmail(e.target.value)} placeholder="hello@cloudpeaksilverlabradors.com" /></label></div>}
+            <label style={{ display: 'block', marginBottom: 8 }}>Reply-to email (optional)<input type="email" style={inputStyle} value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="Where replies should go" /></label>
+            <EmailMarkdownEditor value={replyMessage} onChange={setReplyMessage} inputRef={replyRef} rows={4} label="Reply" />
             <button
               onClick={handleReply}
               disabled={sending || !replyMessage.trim()}

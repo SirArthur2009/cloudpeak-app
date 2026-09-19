@@ -12,6 +12,7 @@
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { renderCampaignMarkdown } from '../_shared/campaignMarkdown.js'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -75,7 +76,7 @@ serve(async (req) => {
       })
     }
 
-    const { thread_id, to, subject, message, reply_to, sender } = await req.json()
+    const { thread_id, to, subject, message, reply_to, sender, custom_sender_name, custom_sender_email } = await req.json()
     if (!to || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(to).trim()) || !message || !String(message).trim() || !subject || !String(subject).trim()) {
       return new Response(JSON.stringify({ error: 'Recipient, subject, and message are required' }), {
         status: 400,
@@ -87,15 +88,23 @@ serve(async (req) => {
       noreply: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
       levi: 'Levi at Cloud Peak <levi@cloudpeaksilverlabradors.com>',
       leah: 'Leah at Cloud Peak <leah@cloudpeaksilverlabradors.com>',
-      admin: 'Cloud Peak Admin <admin@cloudpeaksilverlabradors.com>',
-      owner: 'Cloud Peak Owner <owner@cloudpeaksilverlabradors.com>',
+      admin: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+      owner: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
     }
-    if (sender && !senders[sender]) return new Response(JSON.stringify({ error: 'Invalid sender' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
-    const fromEmail = sender ? senders[sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
+    if (sender && sender !== 'custom' && !senders[sender]) return new Response(JSON.stringify({ error: 'Invalid sender' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    const customName = String(custom_sender_name || '').trim()
+    const customEmail = String(custom_sender_email || '').trim().toLowerCase()
+    if (sender === 'custom' && (!/^[\p{L}\p{N} .,'-]{1,80}$/u.test(customName) || !/^[a-z0-9][a-z0-9._+-]{0,63}@cloudpeaksilverlabradors\.com$/.test(customEmail))) {
+      return new Response(JSON.stringify({ error: 'Enter a sender name and a Cloud Peak email address.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+    if (reply_to && (String(reply_to).length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(reply_to).trim()))) {
+      return new Response(JSON.stringify({ error: 'Enter a valid reply-to email address.' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    }
+    const fromEmail = sender === 'custom' ? `${customName} <${customEmail}>` : sender ? senders[sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
     const forwardTo = Deno.env.get('FORWARD_TO_EMAIL') || DEFAULT_FORWARD_TO
     const replySubject = String(subject).trim().slice(0, 300)
     const safeText = String(message).trim().slice(0, 20000)
-    const safeHtml = `<p>${safeText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br />')}</p>`
+    const safeHtml = renderCampaignMarkdown(safeText)
     const outboundThreadId = thread_id || crypto.randomUUID()
     const authHeaderValue = 'Bearer ' + resendKey
 
@@ -106,7 +115,7 @@ serve(async (req) => {
         from: fromEmail,
         to,
         bcc: forwardTo,
-        reply_to: reply_to || undefined,
+        reply_to: reply_to ? String(reply_to).trim() : undefined,
         subject: replySubject,
         html: safeHtml,
         text: safeText,

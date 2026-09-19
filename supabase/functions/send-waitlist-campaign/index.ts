@@ -29,10 +29,15 @@ serve(async req => {
       noreply: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
       levi: 'Levi at Cloud Peak <levi@cloudpeaksilverlabradors.com>',
       leah: 'Leah at Cloud Peak <leah@cloudpeaksilverlabradors.com>',
-      admin: 'Cloud Peak Admin <admin@cloudpeaksilverlabradors.com>',
-      owner: 'Cloud Peak Owner <owner@cloudpeaksilverlabradors.com>',
+      admin: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
+      owner: 'Cloud Peak Silver Labradors <noreply@cloudpeaksilverlabradors.com>',
     }
-    if (payload.sender && !senders[payload.sender]) return reply({ error: 'Invalid sender' }, 400)
+    if (payload.sender && payload.sender !== 'custom' && !senders[payload.sender]) return reply({ error: 'Invalid sender' }, 400)
+    const customName = String(payload.custom_sender_name || '').trim()
+    const customEmail = String(payload.custom_sender_email || '').trim().toLowerCase()
+    if (payload.sender === 'custom' && (!/^[\p{L}\p{N} .,'-]{1,80}$/u.test(customName) || !/^[a-z0-9][a-z0-9._+-]{0,63}@cloudpeaksilverlabradors\.com$/.test(customEmail))) return reply({ error: 'Enter a sender name and a Cloud Peak email address.' }, 400)
+    const replyTo = payload.reply_to ? String(payload.reply_to).trim() : ''
+    if (replyTo && (replyTo.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(replyTo))) return reply({ error: 'Enter a valid reply-to email address.' }, 400)
     const customRecipients = payload.recipients
     const litterId = audience.startsWith('litter:') ? audience.slice(7) : null
     if (!subject || subject.length > 300 || !message || message.length > 20000) return reply({ error: 'Invalid subject or message' }, 400)
@@ -64,26 +69,33 @@ serve(async req => {
     }
     if (addresses.size > 1000) return reply({ error: 'This group is too large to send in one campaign.' }, 400)
 
-    const from = payload.sender ? senders[payload.sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
+    const from = payload.sender === 'custom' ? `${customName} <${customEmail}>` : payload.sender ? senders[payload.sender] : Deno.env.get('RESEND_FROM_EMAIL') || senders.noreply
     const html = renderCampaignMarkdown(message)
     let sent = 0
     let failed = 0
+    const errors: string[] = []
     const recipients = [...addresses]
     for (let offset = 0; offset < recipients.length; offset += 100) {
       const batch = recipients.slice(offset, offset + 100)
       const response = await fetch('https://api.resend.com/emails/batch', {
         method: 'POST',
         headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(batch.map(email => ({ from, to: [email], subject, text: message, html })))
+        body: JSON.stringify(batch.map(email => ({ from, to: [email], reply_to: replyTo || undefined, subject, text: message, html })))
       })
-      if (!response.ok) { failed += batch.length; console.error('Campaign send failed', response.status, await response.text()); continue }
+      if (!response.ok) {
+        failed += batch.length
+        const reason = `Email provider rejected a batch (${response.status}): ${await response.text()}`
+        errors.push(reason)
+        console.error('Campaign send failed', reason)
+        continue
+      }
       const result = await response.json()
       sent += batch.length
       const rows = batch.map((email, index) => ({ thread_id: crypto.randomUUID(), direction: 'outbound', resend_id: result.data?.[index]?.id || null, from_email: from, to_email: email, subject, text_body: message, html_body: html, is_read: true }))
       const { error } = await db.from('emails').insert(rows)
       if (error) console.error('Campaign email log failed', error.message)
     }
-    return reply({ sent, failed, total: addresses.size })
+    return reply({ sent, failed, total: addresses.size, errors: errors.slice(0, 3) })
   } catch (error) {
     console.error(error)
     return reply({ error: error instanceof Error ? error.message : 'Campaign failed' }, 500)
