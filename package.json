@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
     "dompurify": "^3.4.14",
+    "heic2any": "0.0.4",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-easy-crop": "^5.5.7",

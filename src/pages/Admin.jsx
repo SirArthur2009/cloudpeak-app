@@ -62,6 +62,7 @@ function isMissingLitterIdColumnError(error) {
 }
 // ── Upload a single file to Supabase storage ──
 async function uploadFile(bucket, file) {
+  file = await browserReadablePhoto(file)
   const ext = file.name.split('.').pop()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
   if (file.size > 6 * 1024 * 1024) {
@@ -88,6 +89,14 @@ async function uploadFile(bucket, file) {
   return data.publicUrl
 }
 
+async function browserReadablePhoto(file) {
+  if (!/\.(heic|heif)$/i.test(file.name) && !/^image\/hei[cf]$/i.test(file.type)) return file
+  const { default: heic2any } = await import('heic2any')
+  const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
+  const jpeg = Array.isArray(converted) ? converted[0] : converted
+  return new File([jpeg], file.name.replace(/\.(heic|heif)$/i, '') + '.jpg', { type: 'image/jpeg' })
+}
+
 // ── Single photo upload with crop ──
 function PhotoUpload({ value, onChange, bucket }) {
   const fileRef = useRef()
@@ -102,13 +111,19 @@ function PhotoUpload({ value, onChange, bucket }) {
     import('react-easy-crop').then(m => setCropper(() => m.default))
   }, [])
 
-  function handleFile(e) {
+  async function handleFile(e) {
     const file = e.target.files[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => setCropSrc(reader.result)
-    reader.readAsDataURL(file)
     e.target.value = ''
+    try {
+      const readable = await browserReadablePhoto(file)
+      const reader = new FileReader()
+      reader.onload = () => setCropSrc(reader.result)
+      reader.onerror = () => alert(`Could not read ${file.name}.`)
+      reader.readAsDataURL(readable)
+    } catch (error) {
+      alert(`Could not convert ${file.name}: ${error.message}`)
+    }
   }
 
   async function getCroppedBlob(imageSrc, pixelCrop) {
@@ -230,26 +245,32 @@ function PuppyPhotosManager({ puppyId }) {
   }
 
   // When files are selected, load them all into the crop queue
-  function handleFilesSelected(e) {
+  async function handleFilesSelected(e) {
     const files = Array.from(e.target.files)
     if (!files.length) return
-    const queue = []
-    let loaded = 0
-    files.forEach(file => {
-      const reader = new FileReader()
-      reader.onload = () => {
-        queue.push({ file, dataUrl: reader.result })
-        loaded++
-        if (loaded === files.length) {
-          setCropQueue(queue)
-          setCropIndex(0)
-          setCrop({ x: 0, y: 0 })
-          setZoom(1)
-        }
-      }
-      reader.readAsDataURL(file)
-    })
     e.target.value = ''
+    setUploading(true)
+    try {
+      const queue = await Promise.all(files.map(async file => {
+        const readable = await browserReadablePhoto(file)
+        const dataUrl = await new Promise((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => resolve(reader.result)
+          reader.onerror = () => reject(new Error(`Could not read ${file.name}.`))
+          reader.readAsDataURL(readable)
+        })
+        return { file: readable, dataUrl }
+      }))
+      setCropQueue(queue)
+      setCropIndex(0)
+      setCrop({ x: 0, y: 0 })
+      setZoom(1)
+      setCroppedAreaPixels(null)
+    } catch (error) {
+      alert(`Could not prepare photos: ${error.message}`)
+    } finally {
+      setUploading(false)
+    }
   }
 
   async function getCroppedBlob(imageSrc, pixelCrop) {
@@ -280,18 +301,23 @@ function PuppyPhotosManager({ puppyId }) {
       const { error } = await supabase.storage.from('puppy-photos').upload(path, blob, { contentType: 'image/jpeg' })
       if (error) throw error
       const { data } = supabase.storage.from('puppy-photos').getPublicUrl(path)
-      await supabase.from('puppy_photos').insert({
+      const { error: insertError } = await supabase.from('puppy_photos').insert({
         puppy_id: puppyId,
         photo_url: data.publicUrl,
         caption: caption || null,
         sort_order: photos.length + cropIndex
       })
+      if (insertError) {
+        await supabase.storage.from('puppy-photos').remove([path])
+        throw insertError
+      }
 
       if (cropIndex < cropQueue.length - 1) {
         // More photos to crop
         setCropIndex(i => i + 1)
         setCrop({ x: 0, y: 0 })
         setZoom(1)
+        setCroppedAreaPixels(null)
       } else {
         // All done
         setCropQueue([])
@@ -311,17 +337,19 @@ function PuppyPhotosManager({ puppyId }) {
     try {
       const current = cropQueue[cropIndex]
       const url = await uploadFile('puppy-photos', current.file)
-      await supabase.from('puppy_photos').insert({
+      const { error: insertError } = await supabase.from('puppy_photos').insert({
         puppy_id: puppyId,
         photo_url: url,
         caption: caption || null,
         sort_order: photos.length + cropIndex
       })
+      if (insertError) throw insertError
 
       if (cropIndex < cropQueue.length - 1) {
         setCropIndex(i => i + 1)
         setCrop({ x: 0, y: 0 })
         setZoom(1)
+        setCroppedAreaPixels(null)
       } else {
         setCropQueue([])
         setCropIndex(0)
@@ -337,6 +365,7 @@ function PuppyPhotosManager({ puppyId }) {
   function handleCancelQueue() {
     setCropQueue([])
     setCropIndex(0)
+    setCroppedAreaPixels(null)
   }
 
   async function handleDelete(photoId) {
@@ -435,6 +464,7 @@ function PuppyPhotosManager({ puppyId }) {
           </div>
           <button
             onClick={handleCancelQueue}
+            disabled={uploading}
             style={{ color: '#888', background: 'none', border: 'none', fontSize: '0.85rem', cursor: 'pointer' }}
           >
             Cancel all remaining
