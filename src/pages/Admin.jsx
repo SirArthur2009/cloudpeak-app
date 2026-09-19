@@ -92,9 +92,18 @@ async function uploadFile(bucket, file) {
 async function browserReadablePhoto(file) {
   if (!/\.(heic|heif)$/i.test(file.name) && !/^image\/hei[cf]$/i.test(file.type)) return file
   const { default: heic2any } = await import('heic2any')
-  const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
-  const jpeg = Array.isArray(converted) ? converted[0] : converted
-  return new File([jpeg], file.name.replace(/\.(heic|heif)$/i, '') + '.jpg', { type: 'image/jpeg' })
+  try {
+    const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
+    const jpeg = Array.isArray(converted) ? converted[0] : converted
+    return new File([jpeg], file.name.replace(/\.(heic|heif)$/i, '') + '.jpg', { type: 'image/jpeg' })
+  } catch (error) {
+    // Some phones give JPEG files a HEIC name or MIME type. heic2any recognizes
+    // the browser-readable contents and reports this instead of converting them.
+    const readableType = error.message?.match(/Image is already browser readable: (image\/(?:jpeg|png|webp|gif))/i)?.[1]
+    if (!readableType) throw error
+    const extension = readableType === 'image/jpeg' ? 'jpg' : readableType.split('/')[1]
+    return new File([file], file.name.replace(/\.(heic|heif)$/i, '') + '.' + extension, { type: readableType })
+  }
 }
 
 // ── Single photo upload with crop ──
@@ -589,14 +598,18 @@ function FormGrid({ children }) {
 const COLLAR_COLORS = [
   { label: 'Yellow', hex: '#f5c842' },
   { label: 'Blue', hex: '#3b82f6' },
+  { label: 'Dark Blue', hex: '#1e3a8a' },
   { label: 'Pink', hex: '#ec4899' },
   { label: 'Purple', hex: '#a855f7' },
   { label: 'Red', hex: '#ef4444' },
   { label: 'Green', hex: '#22c55e' },
+  { label: 'Light Green', hex: '#86efac' },
+  { label: 'Dark Green', hex: '#166534' },
   { label: 'Orange', hex: '#f97316' },
   { label: 'Teal', hex: '#14b8a6' },
   { label: 'White', hex: '#e5e7eb' },
   { label: 'Black', hex: '#374151' },
+  { label: 'Grey', hex: '#9ca3af' },
   { label: 'Brown', hex: '#92400e' },
   { label: 'Lime', hex: '#84cc16' },
 ]
@@ -611,6 +624,7 @@ function CollarColorPicker({ value, onChange }) {
             key={c.label}
             type="button"
             title={c.label}
+            aria-label={c.label}
             onClick={() => onChange(c.label)}
             style={{
               width: '28px', height: '28px', borderRadius: '50%',
@@ -641,6 +655,7 @@ function CollarColorPicker({ value, onChange }) {
 // ── PUPPIES TAB (updated with collar_color + unlimited photos) ──
 function PuppiesTab() {
   const [puppies, setPuppies] = useState([])
+  const editorRef = useRef(null)
   const [litters, setLitters] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
@@ -661,7 +676,11 @@ function PuppiesTab() {
       supabase.from('litters').select('*').order('id'),
       supabase.from('waitlist').select('selected_puppy_id, name').not('selected_puppy_id', 'is', null)
     ])
-    setPuppies(p || [])
+    setPuppies((p || []).sort((a, b) => {
+      if ((a.status === 'sold') !== (b.status === 'sold')) return a.status === 'sold' ? 1 : -1
+      const dateDifference = new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      return dateDifference || Number(b.id) - Number(a.id)
+    }))
     setLitters(l || [])
     setReservers(Object.fromEntries((r || []).map(e => [e.selected_puppy_id, e.name])))
     setLoading(false)
@@ -680,6 +699,7 @@ function PuppiesTab() {
       notes: puppy.notes || '',
       photo_url: puppy.photo_url || ''
     })
+    requestAnimationFrame(() => editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
   }
 
   function startNew() {
@@ -750,7 +770,7 @@ function PuppiesTab() {
       {message && <p style={{ color: message.startsWith('Error') ? 'red' : 'green', marginBottom: '1rem' }}>{message}</p>}
 
       {editing && (
-        <div style={{ background: '#f5f5f3', border: '1px solid #e0e0e0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
+        <div ref={editorRef} style={{ background: '#f5f5f3', border: '1px solid #e0e0e0', borderRadius: '10px', padding: '1.25rem', marginBottom: '1.5rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
             <h4 style={{ fontWeight: 600 }}>{editing === 'new' ? 'Add New Puppy' : 'Edit Puppy'}</h4>
             {editing !== 'new' && (
