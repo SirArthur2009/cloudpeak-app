@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
+const isVideo = photo => /\.(mp4|webm|mov)(?:\?|$)/i.test(photo.photo_url)
 
 async function callFunction(name, body) {
   const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
@@ -445,7 +446,9 @@ export default function Puppies() {
 
             <div style={{ position: 'relative', minHeight: '240px', background: '#161616', display: 'grid', placeItems: 'center' }}>
               {gallery.photos.length > 0
-                ? <img src={gallery.photos[gallery.photoIndex].photo_url} alt={gallery.photos[gallery.photoIndex].caption || `${gallery.puppy.name} photo ${gallery.photoIndex + 1}`} style={{ display: 'block', width: '100%', maxHeight: 'calc(100vh - 13rem)', objectFit: 'contain' }} />
+                ? isVideo(gallery.photos[gallery.photoIndex])
+                  ? <video key={gallery.photos[gallery.photoIndex].photo_url} src={gallery.photos[gallery.photoIndex].photo_url} controls playsInline style={{ display: 'block', width: '100%', maxHeight: 'calc(100vh - 13rem)' }} />
+                  : <img src={gallery.photos[gallery.photoIndex].photo_url} alt={gallery.photos[gallery.photoIndex].caption || `${gallery.puppy.name} photo ${gallery.photoIndex + 1}`} style={{ display: 'block', width: '100%', maxHeight: 'calc(100vh - 13rem)', objectFit: 'contain' }} />
                 : <p style={{ color: '#fff' }}>No photos available for this puppy.</p>
               }
               {gallery.photos.length > 1 && <>

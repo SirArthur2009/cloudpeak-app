@@ -1,7 +1,10 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
 import DOMPurify from 'dompurify'
+import * as tus from 'tus-js-client'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
+import AdminFiles from './AdminFiles'
+import AdminCampaigns from './AdminCampaigns'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -61,8 +64,26 @@ function isMissingLitterIdColumnError(error) {
 async function uploadFile(bucket, file) {
   const ext = file.name.split('.').pop()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-  const { error } = await supabase.storage.from(bucket).upload(path, file)
-  if (error) throw error
+  if (file.size > 6 * 1024 * 1024) {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) throw new Error('Please sign in again before uploading.')
+    await new Promise((resolve, reject) => {
+      const upload = new tus.Upload(file, {
+        endpoint: `${SUPABASE_URL.replace('.supabase.co', '.storage.supabase.co')}/storage/v1/upload/resumable`,
+        headers: { authorization: `Bearer ${session.access_token}` },
+        metadata: { bucketName: bucket, objectName: path, contentType: file.type },
+        chunkSize: 6 * 1024 * 1024,
+        retryDelays: [0, 3000, 5000, 10000],
+        removeFingerprintOnSuccess: true,
+        onError: reject,
+        onSuccess: resolve
+      })
+      upload.start()
+    })
+  } else {
+    const { error } = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type })
+    if (error) throw error
+  }
   const { data } = supabase.storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
 }
@@ -167,6 +188,27 @@ function PuppyPhotosManager({ puppyId }) {
   const [uploading, setUploading] = useState(false)
   const [Cropper, setCropper] = useState(null)
   const fileRef = useRef()
+  const videoRef = useRef()
+
+  async function handleVideoSelected(e) {
+    const files = Array.from(e.target.files)
+    e.target.value = ''
+    if (!files.length) return
+    setUploading(true)
+    try {
+      for (const file of files) {
+        if (!['video/mp4', 'video/webm', 'video/quicktime'].includes(file.type)) throw new Error('Choose an MP4, WebM, or MOV video.')
+        const url = await uploadFile('puppy-photos', file)
+        const { error } = await supabase.from('puppy_photos').insert({ puppy_id: puppyId, photo_url: url, caption: null, sort_order: photos.length + 1 })
+        if (error) throw error
+      }
+      await fetchPhotos()
+    } catch (err) {
+      alert('Video upload failed: ' + err.message)
+    } finally {
+      setUploading(false)
+    }
+  }
 
   useEffect(() => {
     import('react-easy-crop').then(m => setCropper(() => m.default))
@@ -298,7 +340,7 @@ function PuppyPhotosManager({ puppyId }) {
   }
 
   async function handleDelete(photoId) {
-    if (!confirm('Delete this photo?')) return
+    if (!confirm('Delete this photo or video?')) return
     await supabase.from('puppy_photos').delete().eq('id', photoId)
     fetchPhotos()
   }
@@ -411,6 +453,10 @@ function PuppyPhotosManager({ puppyId }) {
           + Select Photos
         </button>
         <input ref={fileRef} type="file" accept="image/*" multiple style={{ display: 'none' }} onChange={handleFilesSelected} />
+        <button type="button" disabled={uploading} onClick={() => videoRef.current.click()} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff', padding: '0.65rem' }}>
+          {uploading ? 'Uploading...' : '+ Select Videos'}
+        </button>
+        <input ref={videoRef} type="file" accept="video/mp4,video/webm,video/quicktime,.mov" multiple style={{ display: 'none' }} onChange={handleVideoSelected} />
       </div>
 
       {/* Photo list */}
@@ -438,7 +484,9 @@ function PhotoRow({ photo, index, total, onDelete, onMoveUp, onMoveDown, onCapti
 
   return (
     <div style={{ display: 'flex', gap: '0.75rem', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '0.75rem', alignItems: 'flex-start' }}>
-      <img src={photo.photo_url} alt={photo.caption || `Photo ${index + 1}`} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '6px', flexShrink: 0 }} />
+      {/\.(mp4|webm|mov)(?:\?|$)/i.test(photo.photo_url)
+        ? <video src={photo.photo_url} muted playsInline preload="metadata" style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '6px', flexShrink: 0 }} />
+        : <img src={photo.photo_url} alt={photo.caption || `Photo ${index + 1}`} style={{ width: '72px', height: '72px', objectFit: 'cover', borderRadius: '6px', flexShrink: 0 }} />}
       <div style={{ flex: 1, minWidth: 0 }}>
         {editing ? (
           <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -3196,7 +3244,7 @@ function SettingsTab() {
 // ── ADMIN DASHBOARD SHELL ──
 function AdminDashboard() {
   const [tab, setTab] = useState('puppies')
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'users', 'settings']
+  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'applications', 'users', 'files', 'email campaigns', 'settings']
 
   return (
     <div>
@@ -3216,6 +3264,8 @@ function AdminDashboard() {
       {tab === 'waitlist' && <WaitlistTab />}
       {tab === 'applications' && <ApplicationsTab />}
       {tab === 'users' && <UsersTab />}
+      {tab === 'files' && <AdminFiles />}
+      {tab === 'email campaigns' && <AdminCampaigns />}
       {tab === 'settings' && <SettingsTab />}
     </div>
   )

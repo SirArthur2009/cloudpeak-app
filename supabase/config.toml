@@ -90,3 +90,6 @@ entrypoint = "./functions/receive-inbound-email/index.ts"
 enabled = true
 verify_jwt = true
 entrypoint = "./functions/send-email-reply/index.ts"
+[functions.send-waitlist-campaign]
+enabled = true
+verify_jwt = true
