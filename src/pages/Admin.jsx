@@ -111,7 +111,26 @@ function paymentSummary(payments, born) {
   return { paid, dueNow: Math.max(0, depositTarget - paid), balance: Math.max(0, 1500 - paid) }
 }
 
-function GuestPayments({ guest, litter, compact = false, expanded, onClose, showTrigger = true }) {
+function PaymentPieChart({ paid, balance, dueNow, total = 1500 }) {
+  const paidShare = total > 0 ? Math.min(1, Math.max(0, paid / total)) : 0
+  const circumference = 2 * Math.PI * 38
+  return <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    <svg viewBox="0 0 100 100" width="104" height="104" role="img" aria-label={`${money(paid)} paid and ${money(balance)} due of ${money(total)}`} style={{ flex: '0 0 104px' }}>
+      <circle cx="50" cy="50" r="38" fill="none" stroke="#e8edf0" strokeWidth="16" />
+      {paidShare > 0 && <circle cx="50" cy="50" r="38" fill="none" stroke="#2d7a3a" strokeWidth="16" strokeDasharray={`${circumference * paidShare} ${circumference}`} transform="rotate(-90 50 50)" />}
+      <text x="50" y="47" textAnchor="middle" fill="#263b46" fontSize="15" fontWeight="700">{Math.round(paidShare * 100)}%</text>
+      <text x="50" y="62" textAnchor="middle" fill="#6b7b84" fontSize="9">paid</text>
+    </svg>
+    <div style={{ display: 'grid', gap: 5, minWidth: 145 }}>
+      <span><span aria-hidden="true" style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#2d7a3a', marginRight: 6 }} />{money(paid)} paid</span>
+      <span><span aria-hidden="true" style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#d7e0e5', marginRight: 6 }} />{money(balance)} due</span>
+      <strong style={{ color: dueNow ? '#a63b16' : '#24703c', fontSize: '0.82rem' }}>{dueNow ? `${money(dueNow)} due now` : 'Deposit current'}</strong>
+      {paid > total && <span style={{ color: '#666' }}>{money(paid - total)} overpaid</span>}
+    </div>
+  </div>
+}
+
+function GuestPayments({ guest, litter, compact = false, expanded, onClose, showTrigger = true, onPaymentRecorded }) {
   const [payments, setPayments] = useState([])
   const [type, setType] = useState(litter?.birth_date || litter?.born_date ? 'born_litter_deposit' : 'pre_litter_deposit')
   const [amount, setAmount] = useState(litter?.birth_date || litter?.born_date ? '500' : '100')
@@ -121,10 +140,12 @@ function GuestPayments({ guest, litter, compact = false, expanded, onClose, show
   const isOpen = expanded === undefined ? open : expanded
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
+  const [paymentsLoaded, setPaymentsLoaded] = useState(false)
   useEffect(() => {
     let active = true
-    supabase.from('guest_payments').select('*').eq('waitlist_id', guest.id).order('paid_at', { ascending: false }).then(({ data, error: loadError }) => {
-      if (active) { setPayments(data || []); setError(loadError?.message || '') }
+    supabase.from('guest_payments').select('*').eq('waitlist_id', guest.id).order('paid_at', { ascending: false }).then(({ data, error: fetchError }) => {
+      if (active) { setPayments(data || []); setLoadError(fetchError?.message || ''); setPaymentsLoaded(true) }
     })
     return () => { active = false }
   }, [guest.id])
@@ -136,12 +157,11 @@ function GuestPayments({ guest, litter, compact = false, expanded, onClose, show
     const { data: { user } } = await supabase.auth.getUser()
     const { data, error: saveError } = await supabase.from('guest_payments').insert({ waitlist_id: guest.id, payment_type: type, amount: value, paid_at: date, note: note.trim(), recorded_by: user?.id }).select().single()
     if (saveError) setError(saveError.message)
-    else { setPayments(current => [data, ...current]); setNote(''); if (onClose) onClose(); else setOpen(false) }
+    else { setPayments(current => [data, ...current]); onPaymentRecorded?.(data); setNote(''); if (onClose) onClose(); else setOpen(false) }
     setBusy(false)
   }
   return <div style={{ fontSize: '0.8rem', marginTop: '0.45rem' }}>
-    <span style={{ color: summary.dueNow ? '#a63b16' : '#24703c', fontWeight: 600 }}>{summary.dueNow ? `${money(summary.dueNow)} due now` : 'Deposit current'}</span>
-    <span style={{ color: '#666' }}> · {money(summary.paid)} paid · {money(summary.balance)} total remaining</span>
+    {!paymentsLoaded ? <span style={{ color: '#666' }}>Loading payments…</span> : loadError ? <p style={{ color: '#b91c1c' }}>Payment error: {loadError}</p> : <PaymentPieChart paid={summary.paid} balance={summary.balance} dueNow={summary.dueNow} />}
     {showTrigger && <button type="button" onClick={() => setOpen(!open)} style={{ ...btnStyle, marginLeft: '0.5rem', padding: '0.2rem 0.5rem', background: '#eef2ff', color: '#3730a3', fontSize: '0.75rem' }}>{open ? 'Close' : 'Record payment / history'}</button>}
     {error && <p style={{ color: '#b91c1c' }}>Payment error: {error}</p>}
     {isOpen && <div style={{ background: '#f8f8f8', border: '1px solid #ddd', borderRadius: 8, padding: 10, marginTop: 8 }}>
@@ -3506,14 +3526,16 @@ function PaymentsTab() {
     return () => { active = false }
   }, [])
   const visible = rows.filter(row => filter === 'all' || (filter === 'due' ? row.summary.dueNow > 0 : row.summary.balance > 0))
+  const totals = visible.reduce((sum, row) => ({ paid: sum.paid + row.summary.paid, balance: sum.balance + row.summary.balance, dueNow: sum.dueNow + row.summary.dueNow }), { paid: 0, balance: 0, dueNow: 0 })
   return <div>
     <h3 style={{ marginBottom: 6 }}>Payments</h3>
     <p style={{ color: '#666', marginBottom: 12 }}>Deposit due now reflects the litter stage. Remaining balance is based on the $1,500 total.</p>
     <select aria-label="Payment filter" style={{ ...inputStyle, maxWidth: 210, marginBottom: 12 }} value={filter} onChange={e => setFilter(e.target.value)}><option value="due">Deposit due now</option><option value="balance">Any balance remaining</option><option value="all">Everyone</option></select>
     {error && <p style={{ color: '#b91c1c' }}>{error}</p>}
+    {!error && visible.length > 0 && <div style={{ background: '#fff', border: '1px solid #ddd', borderRadius: 10, padding: 16, marginBottom: 16 }}><strong style={{ display: 'block', marginBottom: 10 }}>Payment totals for {visible.length} {visible.length === 1 ? 'guest' : 'guests'}</strong><PaymentPieChart paid={totals.paid} balance={totals.balance} dueNow={totals.dueNow} total={visible.length * 1500} /></div>}
     {visible.map(row => <div key={row.id} style={{ background: '#fff', border: '1px solid #ddd', borderRadius: 8, padding: 12, marginBottom: 8 }}>
       <strong>{row.name}</strong> <span style={{ color: '#666' }}>· {row.litter?.name || 'No litter'} · {row.email}</span>
-      <GuestPayments guest={row} litter={row.litter} />
+      <GuestPayments guest={row} litter={row.litter} onPaymentRecorded={payment => setRows(current => current.map(item => item.id === row.id ? { ...item, summary: paymentSummary([{ amount: item.summary.paid }, payment], item.litter?.birth_date || item.litter?.born_date) } : item))} />
     </div>)}
     {!error && !visible.length && <p>No guests match this filter.</p>}
   </div>
