@@ -12,6 +12,7 @@ import { auditPuppyImages, checkCandidateImage, findImageMatch, signaturesForPho
 import { signature } from '../lib/duplicatePhotos'
 import { estimatedTimeRemaining } from '../lib/progressEta'
 import { renderCampaignMarkdown } from '../../supabase/functions/_shared/campaignMarkdown'
+import EmailEditor from './EmailEditor'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -3042,47 +3043,6 @@ function ArchivedApplicationsTab() {
   )
 }
 
-function EmailMarkdownEditor({ value, onChange, inputRef, rows = 7, label = 'Message' }) {
-  const [textColor, setTextColor] = useState('#1769c2')
-  function insert(before, after = before, placeholder = 'text') {
-    const editor = inputRef.current
-    if (!editor) return
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
-    const selected = value.slice(start, end) || placeholder
-    onChange(value.slice(0, start) + before + selected + after + value.slice(end))
-    requestAnimationFrame(() => { editor.focus(); editor.setSelectionRange(start + before.length, start + before.length + selected.length) })
-  }
-  function insertLink() {
-    const url = window.prompt('Link URL (https://...)')
-    if (!url) return
-    let parsed
-    try { parsed = new URL(url) } catch { return }
-    if (!['https:', 'http:'].includes(parsed.protocol)) return
-    const editor = inputRef.current
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
-    const labelText = value.slice(start, end) || window.prompt('Link text', 'Click here') || 'Click here'
-    onChange(value.slice(0, start) + `[${labelText}](${parsed.href})` + value.slice(end))
-    requestAnimationFrame(() => editor.focus())
-  }
-  const toolButton = { ...btnStyle, padding: '0.4rem 0.6rem', background: '#f4f6f7', border: '1px solid #d5dfe4', fontSize: '0.8rem' }
-  return <div style={{ display: 'grid', gap: 8 }}>
-    <label htmlFor={label === 'Reply' ? 'reply-email-message' : 'compose-email-message'}>{label}</label>
-    <div role="toolbar" aria-label={`${label} formatting`} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-      <button type="button" style={toolButton} onClick={() => insert('**', '**', 'bold text')}>Bold</button>
-      <button type="button" style={toolButton} onClick={() => insert('*', '*', 'italic text')}>Italic</button>
-      <button type="button" style={toolButton} onClick={() => insert('## ', '', 'Heading')}>Heading</button>
-      <button type="button" style={toolButton} onClick={() => insert('- ', '', 'List item')}>List</button>
-      <button type="button" style={toolButton} onClick={insertLink}>Link</button>
-      <label style={{ ...toolButton, display: 'inline-flex', alignItems: 'center', gap: 5 }}>Color <input type="color" aria-label="Choose text color" value={textColor} onChange={e => setTextColor(e.target.value)} style={{ width: 26, height: 24, padding: 0, border: 0 }} /></label>
-      <button type="button" style={toolButton} onClick={() => insert(`{color:${textColor}|`, '}', 'colored text')}>Apply color</button>
-    </div>
-    <textarea id={label === 'Reply' ? 'reply-email-message' : 'compose-email-message'} ref={inputRef} rows={rows} style={{ ...inputStyle, resize: 'vertical' }} value={value} onChange={e => onChange(e.target.value)} maxLength={20000} placeholder="Write your email. Use the toolbar for formatting." />
-    <div style={{ border: '1px solid #ddd', borderRadius: 8, padding: 12, overflowWrap: 'anywhere' }}><strong style={{ fontSize: '0.8rem' }}>Preview</strong>{value.trim() ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderCampaignMarkdown(value)) }} /> : <p style={{ color: '#888', marginTop: 8 }}>Your message preview appears here.</p>}</div>
-  </div>
-}
-
 function EmailTab() {
   const [emails, setEmails] = useState([])
   const [contactsMap, setContactsMap] = useState(new Map())
@@ -3304,7 +3264,7 @@ function EmailTab() {
         <label>Reply-to email (optional)<input type="email" style={inputStyle} value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="Where replies should go" /></label>
         <label>To<input type="email" style={inputStyle} value={compose.to} onChange={e => setCompose({ ...compose, to: e.target.value })} /></label>
         <label>Subject<input style={inputStyle} value={compose.subject} onChange={e => setCompose({ ...compose, subject: e.target.value })} /></label>
-        <EmailMarkdownEditor value={compose.message} onChange={message => setCompose(current => ({ ...current, message }))} inputRef={composeRef} />
+        <EmailEditor value={compose.message} onChange={message => setCompose(current => ({ ...current, message }))} inputRef={composeRef} subject={compose.subject} />
         {sendError && <p style={{ color: '#b91c1c' }}>{sendError}</p>}
         <div style={{ display: 'flex', gap: 8 }}><button disabled={sending || !compose.to || !compose.subject.trim() || !compose.message.trim()} onClick={handleCompose} style={{ ...btnStyle, background: '#1a1a1a', color: '#fff' }}>Send</button><button onClick={() => setComposing(false)} style={btnStyle}>Discard</button></div>
       </div>}
@@ -3397,7 +3357,7 @@ function EmailTab() {
             <label style={{ display: 'block', marginBottom: 8 }}>Reply from<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
             {sender === 'custom' && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}><label style={{ flex: '1 1 180px' }}>Sender name<input style={inputStyle} value={customSenderName} onChange={e => setCustomSenderName(e.target.value)} placeholder="Name shown to recipients" /></label><label style={{ flex: '2 1 260px' }}>Sender email<input type="email" style={inputStyle} value={customSenderEmail} onChange={e => setCustomSenderEmail(e.target.value)} placeholder="hello@cloudpeaksilverlabradors.com" /></label></div>}
             <label style={{ display: 'block', marginBottom: 8 }}>Reply-to email (optional)<input type="email" style={inputStyle} value={replyTo} onChange={e => setReplyTo(e.target.value)} placeholder="Where replies should go" /></label>
-            <EmailMarkdownEditor value={replyMessage} onChange={setReplyMessage} inputRef={replyRef} rows={4} label="Reply" />
+            <EmailEditor value={replyMessage} onChange={setReplyMessage} inputRef={replyRef} rows={4} label="Reply" />
             <button
               onClick={handleReply}
               disabled={sending || !replyMessage.trim()}

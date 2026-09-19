@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import DOMPurify from 'dompurify'
 import { supabase } from '../lib/supabase'
-import { renderCampaignMarkdown } from '../../supabase/functions/_shared/campaignMarkdown'
+import EmailEditor from './EmailEditor'
 
 const field = { width: '100%', padding: 10, border: '1px solid #ddd', borderRadius: 6, font: 'inherit' }
 const button = { padding: '0.6rem 0.9rem', border: '1px solid #ddd', borderRadius: 6, background: '#fff', cursor: 'pointer' }
@@ -40,37 +39,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const [textColor, setTextColor] = useState('#1769c2')
   const messageRef = useRef(null)
-
-  function insertFormatting(before, after = before, placeholder = 'text') {
-    const editor = messageRef.current
-    if (!editor) return
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
-    const selected = body.slice(start, end) || placeholder
-    setBody(body.slice(0, start) + before + selected + after + body.slice(end))
-    requestAnimationFrame(() => {
-      editor.focus()
-      editor.setSelectionRange(start + before.length, start + before.length + selected.length)
-    })
-  }
-
-  function insertLink() {
-    const editor = messageRef.current
-    if (!editor) return
-    const start = editor.selectionStart
-    const end = editor.selectionEnd
-    const selected = body.slice(start, end)
-    const url = window.prompt('Link URL (https://...)')
-    if (!url) return
-    let parsed
-    try { parsed = new URL(url) } catch { setMessage('Enter a valid link URL.'); return }
-    if (!['https:', 'http:'].includes(parsed.protocol)) { setMessage('Links must start with https:// or http://.'); return }
-    const label = selected || window.prompt('Link text', 'Click here') || 'Click here'
-    setBody(body.slice(0, start) + `[${label}](${parsed.href})` + body.slice(end))
-    requestAnimationFrame(() => editor.focus())
-  }
 
   async function load() {
     const [l, t] = await Promise.all([
@@ -170,24 +139,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
     }}><option value="">New message</option>{templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label>
     <label>Template name<input style={field} value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="e.g. Litter update" /></label>
     <label>Subject<input style={field} value={subject} onChange={e => setSubject(e.target.value)} maxLength={300} /></label>
-    <label htmlFor="campaign-message">Message</label>
-    <div role="toolbar" aria-label="Message formatting" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', margin: '6px 0' }}>
-      <button type="button" style={button} onClick={() => insertFormatting('**', '**', 'bold text')}>Bold</button>
-      <button type="button" style={button} onClick={() => insertFormatting('*', '*', 'italic text')}>Italic</button>
-      <button type="button" style={button} onClick={() => insertFormatting('## ', '', 'Heading')}>Heading</button>
-      <button type="button" style={button} onClick={() => insertFormatting('- ', '', 'List item')}>Bullet list</button>
-      <button type="button" style={button} onClick={insertLink}>Link</button>
-      <label style={{ ...button, display: 'inline-flex', alignItems: 'center', gap: 6 }}>Text color
-        <input type="color" aria-label="Choose text color" value={textColor} onChange={e => setTextColor(e.target.value)} style={{ width: 30, height: 26, padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }} />
-      </label>
-      <button type="button" style={button} onClick={() => insertFormatting(`{color:${textColor}|`, '}', 'colored text')}>Apply color</button>
-    </div>
-    <textarea id="campaign-message" ref={messageRef} style={{ ...field, minHeight: 220 }} value={body} onChange={e => setBody(e.target.value)} maxLength={20000} placeholder="Write your email here. Use the toolbar to add formatting." />
-    <h4 style={{ margin: '18px 0 8px' }}>Email preview</h4>
-    <div style={{ border: '1px solid #ddd', borderRadius: 6, padding: '16px 20px', background: '#fff', overflowWrap: 'anywhere' }}>
-      <div style={{ fontWeight: 600, borderBottom: '1px solid #eee', paddingBottom: 10, marginBottom: 14 }}>{subject || 'Subject'}</div>
-      {body.trim() ? <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderCampaignMarkdown(body)) }} /> : <p style={{ color: '#888' }}>Your message preview will appear here.</p>}
-    </div>
+    <EmailEditor value={body} onChange={setBody} inputRef={messageRef} rows={10} subject={subject} />
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
       <button style={button} disabled={busy} onClick={saveTemplate}>Save template</button>
       {selectedTemplate && <button style={button} disabled={busy} onClick={deleteTemplate}>Delete template</button>}
