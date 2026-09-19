@@ -35,6 +35,7 @@ export default function AdminCampaigns() {
   const [selectedTemplate, setSelectedTemplate] = useState('')
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const [textColor, setTextColor] = useState('#1769c2')
   const messageRef = useRef(null)
 
   function insertFormatting(before, after = before, placeholder = 'text') {
@@ -152,6 +153,10 @@ export default function AdminCampaigns() {
       <button type="button" style={button} onClick={() => insertFormatting('## ', '', 'Heading')}>Heading</button>
       <button type="button" style={button} onClick={() => insertFormatting('- ', '', 'List item')}>Bullet list</button>
       <button type="button" style={button} onClick={insertLink}>Link</button>
+      <label style={{ ...button, display: 'inline-flex', alignItems: 'center', gap: 6 }}>Text color
+        <input type="color" aria-label="Choose text color" value={textColor} onChange={e => setTextColor(e.target.value)} style={{ width: 30, height: 26, padding: 0, border: 0, background: 'transparent', cursor: 'pointer' }} />
+      </label>
+      <button type="button" style={button} onClick={() => insertFormatting(`{color:${textColor}|`, '}', 'colored text')}>Apply color</button>
     </div>
     <textarea id="campaign-message" ref={messageRef} style={{ ...field, minHeight: 220 }} value={body} onChange={e => setBody(e.target.value)} maxLength={20000} placeholder="Write your email here. Use the toolbar to add formatting." />
     <h4 style={{ margin: '18px 0 8px' }}>Email preview</h4>

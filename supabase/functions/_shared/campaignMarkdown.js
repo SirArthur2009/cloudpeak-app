@@ -2,9 +2,10 @@ const escapeHtml = value => String(value).replace(/[&<>"']/g, character => ({ '&
 
 function inline(value) {
   let html = escapeHtml(value)
-  html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`)
+  html = html.replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => `<a href="${url}" style="color:#1769c2;text-decoration:underline" target="_blank" rel="noopener noreferrer">${label}</a>`)
   html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
   html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+  html = html.replace(/\{color:(#[0-9a-fA-F]{6})\|([^{}\n]+)\}/g, (_match, color, content) => `<span style="color:${color}">${content}</span>`)
   return html
 }
 
