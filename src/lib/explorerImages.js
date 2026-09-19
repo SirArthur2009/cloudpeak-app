@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
 import * as tus from 'tus-js-client'
 
-const IMAGE_EXTENSION = /\.(heic|heif|webp|gif|avif|bmp|tiff?|svg)$/i
+const IMAGE_EXTENSION = /\.(jpe?g|png|heic|heif|webp|gif|avif|bmp|tiff?|svg)$/i
 
 export function isImageFile(file) {
   return file.type?.startsWith('image/') || IMAGE_EXTENSION.test(file.name)
@@ -10,13 +10,12 @@ export function isImageFile(file) {
 export async function prepareExplorerFile(file) {
   if (!isImageFile(file)) return file
   const stem = file.name.replace(/\.[^.]+$/, '')
-  if (file.type === 'image/jpeg') return /\.jpe?g$/i.test(file.name) ? file : new File([file], `${stem}.jpg`, { type: 'image/jpeg' })
   if (file.type === 'image/png') return /\.png$/i.test(file.name) ? file : new File([file], `${stem}.png`, { type: 'image/png' })
   if (/\.(heic|heif)$/i.test(file.name) || /^image\/hei[cf]$/i.test(file.type)) {
     const { default: heic2any } = await import('heic2any')
     try {
       const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
-      return new File([Array.isArray(converted) ? converted[0] : converted], `${stem}.jpg`, { type: 'image/jpeg' })
+      return prepareExplorerFile(new File([Array.isArray(converted) ? converted[0] : converted], `${stem}.jpg`, { type: 'image/jpeg' }))
     } catch (error) {
       const readableType = error.message?.match(/Image is already browser readable: (image\/(?:jpeg|png|webp|gif))/i)?.[1]
       if (!readableType) throw error
@@ -54,8 +53,7 @@ export async function publishExplorerImage(file, bucket) {
   const { data, error } = await supabase.storage.from('admin-files').download(file.storage_path)
   if (error) throw error
   const prepared = await prepareExplorerFile(new File([data], file.name, { type: file.content_type || data.type }))
-  const extension = prepared.type === 'image/png' ? 'png' : 'jpg'
-  const path = `${crypto.randomUUID()}.${extension}`
+  const path = `${crypto.randomUUID()}.png`
   if (prepared.size > 6 * 1024 * 1024) {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession()
     if (sessionError || !session) throw new Error('Please sign in again before adding this image.')

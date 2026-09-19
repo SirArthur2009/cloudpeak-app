@@ -7,7 +7,7 @@ import AdminFiles from './AdminFiles'
 import AdminCampaigns from './AdminCampaigns'
 import ImageLibraryPicker from './ImageLibraryPicker'
 import DuplicatePhotoTool from './DuplicatePhotoTool'
-import { publishExplorerImage } from '../lib/explorerImages'
+import { prepareExplorerFile, publishExplorerImage } from '../lib/explorerImages'
 import { auditPuppyImages, checkCandidateImage, findImageMatch, signaturesForPhotos } from '../lib/puppyImageChecks'
 import { signature } from '../lib/duplicatePhotos'
 
@@ -95,20 +95,7 @@ async function uploadFile(bucket, file) {
 }
 
 async function browserReadablePhoto(file) {
-  if (!/\.(heic|heif)$/i.test(file.name) && !/^image\/hei[cf]$/i.test(file.type)) return file
-  const { default: heic2any } = await import('heic2any')
-  try {
-    const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
-    const jpeg = Array.isArray(converted) ? converted[0] : converted
-    return new File([jpeg], file.name.replace(/\.(heic|heif)$/i, '') + '.jpg', { type: 'image/jpeg' })
-  } catch (error) {
-    // Some phones give JPEG files a HEIC name or MIME type. heic2any recognizes
-    // the browser-readable contents and reports this instead of converting them.
-    const readableType = error.message?.match(/Image is already browser readable: (image\/(?:jpeg|png|webp|gif))/i)?.[1]
-    if (!readableType) throw error
-    const extension = readableType === 'image/jpeg' ? 'jpg' : readableType.split('/')[1]
-    return new File([file], file.name.replace(/\.(heic|heif)$/i, '') + '.' + extension, { type: readableType })
-  }
+  return prepareExplorerFile(file)
 }
 
 // ── Single photo upload with crop ──
@@ -155,7 +142,7 @@ function PhotoUpload({ value, onChange, bucket, beforeUse }) {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height)
-    return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92))
+    return new Promise(res => canvas.toBlob(res, 'image/png'))
   }
 
   async function handleCropConfirm() {
@@ -163,11 +150,7 @@ function PhotoUpload({ value, onChange, bucket, beforeUse }) {
     try {
       const blob = await getCroppedBlob(cropSrc, croppedAreaPixels)
       if (beforeUse) await beforeUse(blob)
-      const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
-      const { error } = await supabase.storage.from(bucket).upload(path, blob, { contentType: 'image/jpeg' })
-      if (error) throw error
-      const { data } = supabase.storage.from(bucket).getPublicUrl(path)
-      onChange(data.publicUrl)
+      onChange(await uploadFile(bucket, new File([blob], 'photo.png', { type: 'image/png' })))
       setCropSrc(null)
     } catch (err) {
       alert('Photo not added: ' + err.message)
@@ -346,7 +329,7 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
     ctx.fillStyle = '#ffffff'
     ctx.fillRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height)
-    return new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92))
+    return new Promise(res => canvas.toBlob(res, 'image/png'))
   }
 
   // Crop current photo and upload, then advance to next
@@ -357,18 +340,15 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
       const current = cropQueue[cropIndex]
       const blob = await getCroppedBlob(current.dataUrl, croppedAreaPixels)
       await checkGalleryCandidate(blob)
-      const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`
-      const { error } = await supabase.storage.from('puppy-photos').upload(path, blob, { contentType: 'image/jpeg' })
-      if (error) throw error
-      const { data } = supabase.storage.from('puppy-photos').getPublicUrl(path)
+      const url = await uploadFile('puppy-photos', new File([blob], 'photo.png', { type: 'image/png' }))
       const { error: insertError } = await supabase.from('puppy_photos').insert({
         puppy_id: puppyId,
-        photo_url: data.publicUrl,
+        photo_url: url,
         caption: caption || null,
         sort_order: photos.length + cropIndex
       })
       if (insertError) {
-        await supabase.storage.from('puppy-photos').remove([path])
+        await supabase.storage.from('puppy-photos').remove([decodeURIComponent(new URL(url).pathname.split('/puppy-photos/')[1])])
         throw insertError
       }
 

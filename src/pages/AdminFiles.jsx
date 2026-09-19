@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as tus from 'tus-js-client'
 import { prepareExplorerFile } from '../lib/explorerImages'
+import { convertPhotosToPng } from '../lib/convertPhotosToPng'
 import './AdminFiles.css'
 
 const formatSize = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / 1048576).toFixed(1)} MB`
@@ -9,6 +10,28 @@ const formatDate = value => value ? new Date(value).toLocaleDateString(undefined
 const fileKind = file => file.content_type?.startsWith('image/') ? 'Image' : file.content_type === 'application/pdf' ? 'PDF document' : file.name.includes('.') ? `${file.name.split('.').pop().toUpperCase()} file` : 'File'
 const extensionOf = name => { const dot = name.lastIndexOf('.'); return dot > 0 ? name.slice(dot) : '' }
 const isImage = file => file.content_type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(file.name)
+const safeZipName = name => (name.replace(/[\\/]/g, '_').replace(/^\.+$/, '_') || 'Untitled')
+
+function folderContents(root, allFolders, allFiles) {
+  const entries = []
+  const seen = new Set()
+  function visit(folder, path, depth) {
+    if (seen.has(folder.id)) return
+    seen.add(folder.id)
+    entries.push({ folder, path, depth })
+    const usedNames = new Set()
+    for (const child of allFolders.filter(item => item.parent_id === folder.id)) {
+      const base = safeZipName(child.name)
+      let name = base
+      let number = 2
+      while (usedNames.has(name.toLowerCase())) name = `${base} (${number++})`
+      usedNames.add(name.toLowerCase())
+      visit(child, `${path}/${name}`, depth + 1)
+    }
+  }
+  visit(root, safeZipName(root.name), 0)
+  return { entries, files: allFiles.filter(file => seen.has(file.folder_id)) }
+}
 
 function FileGlyph({ folder = false, image = false }) {
   return <span className={`file-icon${folder ? ' folder-icon' : image ? ' image-icon' : ''}`} aria-hidden="true">
@@ -35,6 +58,9 @@ export default function AdminFiles({ onOpenCleanup }) {
   const [filter, setFilter] = useState('all')
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
+  const [openMenuId, setOpenMenuId] = useState(null)
+  const [folderProgress, setFolderProgress] = useState(null)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const dragAnchor = useRef(null)
 
   useEffect(() => {
@@ -43,6 +69,15 @@ export default function AdminFiles({ onOpenCleanup }) {
     window.addEventListener('pointercancel', stopDrag)
     return () => { window.removeEventListener('pointerup', stopDrag); window.removeEventListener('pointercancel', stopDrag) }
   }, [])
+
+  useEffect(() => {
+    if (!openMenuId) return
+    const closeOutside = event => { if (!event.target.closest('.file-menu-wrap')) setOpenMenuId(null) }
+    const closeEscape = event => { if (event.key === 'Escape') setOpenMenuId(null) }
+    document.addEventListener('pointerdown', closeOutside)
+    window.addEventListener('keydown', closeEscape)
+    return () => { document.removeEventListener('pointerdown', closeOutside); window.removeEventListener('keydown', closeEscape) }
+  }, [openMenuId])
 
   useEffect(() => {
     if (!preview) return
@@ -98,7 +133,7 @@ export default function AdminFiles({ onOpenCleanup }) {
   collectFolders(null, 0)
 
   function goToFolder(id) {
-    setFolderId(id); setSelectedIds([]); setSearch(''); setFilter('all'); setEditing(null)
+    setFolderId(id); setSelectedIds([]); setSearch(''); setFilter('all'); setEditing(null); setOpenMenuId(null)
   }
 
   async function run(action) {
@@ -206,6 +241,7 @@ export default function AdminFiles({ onOpenCleanup }) {
     })
   }
   function startRename(type, item) {
+    setOpenMenuId(null)
     setEditing({ type, id: item.id })
     setDraftName(item.name)
     setMessage('')
@@ -291,12 +327,81 @@ export default function AdminFiles({ onOpenCleanup }) {
     })
   }
   async function removeFolder(folder) {
-    if (folders.some(f => f.parent_id === folder.id) || files.some(f => f.folder_id === folder.id)) { setMessage('Empty the folder before deleting it.'); return }
-    if (!confirm(`Delete folder ${folder.name}?`)) return
-    run(async () => {
-      const { error } = await supabase.from('admin_folders').delete().eq('id', folder.id)
-      if (error) throw error
+    const contents = folderContents(folder, folders, files)
+    if (!confirm(`Delete “${folder.name}” and everything inside it (${contents.files.length} files, ${contents.entries.length} folders)? This cannot be undone.`)) return
+    await run(async () => {
+      const publicFiles = contents.files.filter(file => (file.storage_bucket || 'admin-files') !== 'admin-files')
+      for (const file of publicFiles) {
+        const url = supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
+        const checks = await Promise.all(['puppy_photos', 'puppies', 'dogs'].map(table => supabase.from(table).select('id', { count: 'exact', head: true }).eq('photo_url', url)))
+        if (checks.some(check => check.error)) throw checks.find(check => check.error).error
+        if (checks.some(check => check.count > 0)) throw new Error(`“${file.name}” is used on the site. Remove its photo references before deleting this folder.`)
+      }
+      const byBucket = new Map()
+      for (const file of contents.files) {
+        const bucket = file.storage_bucket || 'admin-files'
+        if (!byBucket.has(bucket)) byBucket.set(bucket, [])
+        byBucket.get(bucket).push(file)
+      }
+      for (const [bucket, bucketFiles] of byBucket) {
+        for (let index = 0; index < bucketFiles.length; index += 100) {
+          const batch = bucketFiles.slice(index, index + 100)
+          const { error: storageError } = await supabase.storage.from(bucket).remove(batch.map(file => file.storage_path))
+          if (storageError) throw storageError
+          const { error: rowsError } = await supabase.from('admin_files').delete().in('id', batch.map(file => file.id))
+          if (rowsError) throw rowsError
+        }
+      }
+      for (const { folder: child } of [...contents.entries].reverse()) {
+        const { error } = await supabase.from('admin_folders').delete().eq('id', child.id)
+        if (error) throw error
+      }
+      if (contents.entries.some(entry => entry.folder.id === folderId)) goToFolder(folder.parent_id)
+      setSelectedIds([])
     })
+  }
+  async function downloadFolder(folder) {
+    setBusy(true); setMessage(''); setOpenMenuId(null)
+    try {
+      const { default: JSZip } = await import('jszip')
+      const { entries, files: folderFiles } = folderContents(folder, folders, files)
+      const zip = new JSZip()
+      const paths = new Map(entries.map(entry => [entry.folder.id, entry.path]))
+      entries.forEach(entry => zip.folder(entry.path))
+      const usedPaths = new Set()
+      for (const [index, file] of folderFiles.entries()) {
+        setFolderProgress({ name: file.name, percent: Math.round(index / Math.max(folderFiles.length, 1) * 80) })
+        const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+        if (error) throw error
+        const base = safeZipName(file.name)
+        const stem = base.slice(0, base.length - extensionOf(base).length)
+        const ext = extensionOf(base)
+        let name = base
+        let number = 2
+        while (usedPaths.has(`${paths.get(file.folder_id)}/${name}`.toLowerCase())) name = `${stem} (${number++})${ext}`
+        const path = `${paths.get(file.folder_id)}/${name}`
+        usedPaths.add(path.toLowerCase())
+        zip.file(path, data)
+      }
+      setFolderProgress({ name: 'Creating ZIP archive', percent: 80 })
+      const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, metadata => setFolderProgress({ name: 'Creating ZIP archive', percent: 80 + Math.round(metadata.percent * .2) }))
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url; link.download = `${safeZipName(folder.name)}.zip`; document.body.append(link); link.click(); link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 60000)
+    } catch (error) { setMessage(error.message) }
+    finally { setFolderProgress(null); setBusy(false) }
+  }
+  async function convertAllImages() {
+    setToolsOpen(false)
+    if (!confirm('Convert all tracked images in Files and puppy/dog photos to PNG? Photo links will be updated. This may take several minutes.')) return
+    setBusy(true); setMessage(''); setFolderProgress({ current: 0, total: 0, name: 'Finding images', percent: 0 })
+    try {
+      const result = await convertPhotosToPng(setFolderProgress)
+      await refresh()
+      setMessage(`Converted ${result.converted} images to PNG; ${result.skipped} were already PNG.${result.failed.length ? ` ${result.failed.length} failed: ${result.failed.join('; ')}` : ''}`)
+    } catch (error) { setMessage(`Conversion stopped: ${error.message}`) }
+    finally { setFolderProgress(null); setBusy(false) }
   }
   const renderName = (type, item) => editing?.type === type && editing.id === item.id
     ? <form className="file-rename" onSubmit={event => { event.preventDefault(); rename(type, item) }}>
@@ -307,14 +412,13 @@ export default function AdminFiles({ onOpenCleanup }) {
       </form>
     : type === 'folder'
       ? <button className="file-name-button" onClick={() => goToFolder(item.id)} title={`Open ${item.name}`}>{item.name}</button>
-      : <button type="button" className="file-name-button file-rename-trigger" disabled={busy} onClick={() => startRename('file', item)} title={`Rename ${item.name}`} aria-label={`Rename file ${item.name}`}>
-          <span className="file-name">{item.name}</span><span className="file-edit-mark" aria-hidden="true">✎</span>
-        </button>
+      : <button type="button" className="file-name-button" disabled={busy} onClick={() => isImage(item) ? openPreview(item) : download(item)} title={`${isImage(item) ? 'View' : 'Download'} ${item.name}`}>{item.name}</button>
 
   return <section className="file-explorer">
     <div className="file-explorer-heading">
       <div><span className="file-eyebrow">ADMIN LIBRARY</span><h3>Files</h3><p>Organize photos and documents for Cloud Peak.</p></div>
       <div className="file-toolbar">
+        <div className="file-toolbar-tools"><button type="button" className="file-secondary-button" disabled={busy} aria-expanded={toolsOpen} onClick={() => setToolsOpen(open => !open)}>Tools ▾</button>{toolsOpen && <div className="file-tools-menu"><button type="button" onClick={convertAllImages}>Convert all images to PNG</button></div>}</div>
         <button type="button" className="file-secondary-button" disabled={busy} onClick={() => setCreatingFolder(true)}>+ New folder</button>
         <label className={`file-secondary-button${busy ? ' disabled' : ''}`}>Upload folder<input type="file" webkitdirectory="" directory="" onChange={event => upload(event, true)} disabled={busy} /></label>
         <label className={`file-primary-button${busy ? ' disabled' : ''}`}>Upload files<input type="file" multiple onChange={event => upload(event)} disabled={busy} /></label>
@@ -339,11 +443,12 @@ export default function AdminFiles({ onOpenCleanup }) {
         <p title={uploadProgress.name}>{uploadProgress.name}</p>
         <progress value={uploadProgress.percent} max="100" aria-label="Upload progress" />
       </div>}
+      {folderProgress && <div className="file-upload-progress" role="status" aria-live="polite"><div><strong>{folderProgress.total !== undefined ? `Converting image ${folderProgress.current} of ${folderProgress.total}` : 'Downloading folder'}</strong><span>{folderProgress.percent}%</span></div><p title={folderProgress.name}>{folderProgress.name}</p><progress value={folderProgress.percent} max="100" aria-label="Image processing progress" /></div>}
       <nav className="file-breadcrumbs" aria-label="Folder path">
         <button onClick={() => goToFolder(null)} aria-current={folderId === null ? 'page' : undefined}>Files</button>
         {crumbs.map(f => <span key={f.id} className="file-crumb"><span aria-hidden="true">›</span><button onClick={() => goToFolder(f.id)} aria-current={folderId === f.id ? 'page' : undefined}>{f.name}</button></span>)}
       </nav>
-      <div className="file-location"><div><strong>{current?.name || 'Files home'}</strong><span>{children.length} folders · {currentFiles.length} files</span></div></div>
+      <div className="file-location"><div><strong>{current?.name || 'Files home'}</strong><span>{children.length} folders · {currentFiles.length} files</span></div>{current && <div className="file-location-actions"><button type="button" disabled={busy} onClick={() => downloadFolder(current)}>Download folder</button><button type="button" className="danger" disabled={busy} onClick={() => removeFolder(current)}>Delete folder</button></div>}</div>
       <div className="file-controls"><label className="file-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search this folder" placeholder="Search this folder" value={search} onChange={event => { setSearch(event.target.value); setSelectedIds([]) }} /></label><div className="file-filters" role="group" aria-label="Filter files">
         {[['all', 'All'], ['images', 'Images'], ['other', 'Other files'], ['public', 'Public']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => { setFilter(value); setSelectedIds([]) }}>{label}</button>)}
       </div></div>
@@ -351,7 +456,7 @@ export default function AdminFiles({ onOpenCleanup }) {
         <label><input type="checkbox" checked={selectedFiles.length === visibleFiles.length} onChange={event => setSelectedIds(event.target.checked ? visibleFiles.map(file => file.id) : [])} disabled={busy} /> Select all shown</label>
         <span>{selectedFiles.length} selected</span>
         {selectedFiles.length > 0 && <button type="button" disabled={busy} onClick={() => setSelectedIds([])}>Clear selection</button>}
-        <small>Drag across rows to select a range.</small>
+        <small>Desktop: press on a file row and drag across rows. Mobile: tap checkboxes.</small>
       </div>}
       {selectedFiles.length > 0 && <form className="file-bulk-rename" onSubmit={bulkRename}>
         <label htmlFor="bulk-file-name">Rename {selectedFiles.length} files</label>
@@ -366,12 +471,12 @@ export default function AdminFiles({ onOpenCleanup }) {
         {visibleFolders.map(f => <div className="file-row" role="row" key={f.id}>
           <div className="file-item"><FileGlyph folder />{renderName('folder', f)}</div>
           <span className="file-meta">Folder</span><span className="file-meta">—</span><span className="file-meta">{formatDate(f.created_at)}</span>
-          <div className="file-actions"><button disabled={busy} onClick={() => startRename('folder', f)}>Rename</button><button className="danger" disabled={busy} onClick={() => removeFolder(f)}>Delete</button></div>
+          <div className="file-actions"><button disabled={busy} onClick={() => downloadFolder(f)}>Download</button><button disabled={busy} onClick={() => startRename('folder', f)}>Rename</button><button className="danger" disabled={busy} onClick={() => removeFolder(f)}>Delete</button></div>
         </div>)}
         {visibleFiles.map(f => <div className={`file-row file-selectable-row${selectedIds.includes(f.id) ? ' selected' : ''}`} role="row" key={f.id} onPointerDown={event => selectRow(event, f.id)} onPointerEnter={event => extendSelection(event, f.id)}>
           <div className="file-item"><input className="file-select-checkbox" type="checkbox" checked={selectedIds.includes(f.id)} onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))} disabled={busy} aria-label={`Select ${f.name}`} /><FileGlyph image={isImage(f)} />{renderName('file', f)}</div>
           <span className="file-meta">{fileKind(f)}{f.storage_bucket && f.storage_bucket !== 'admin-files' && <span className="file-public-label">Public</span>}</span><span className="file-meta">{formatSize(f.size_bytes)}</span><span className="file-meta">{formatDate(f.created_at)}</span>
-          <div className="file-actions">{f.content_type?.startsWith('image/') && <button disabled={busy} onClick={() => openPreview(f)}>View</button>}<button disabled={busy} onClick={() => download(f)}>Download</button><button disabled={busy} onClick={() => startRename('file', f)}>Rename</button><button className="danger" disabled={busy} onClick={() => removeFile(f)}>Delete</button></div>
+          <div className="file-actions"><div className="file-menu-wrap"><button type="button" className="file-menu-trigger" disabled={busy} aria-label={`Actions for ${f.name}`} aria-expanded={openMenuId === f.id} aria-haspopup="menu" onClick={() => setOpenMenuId(id => id === f.id ? null : f.id)}>Actions <span aria-hidden="true">▾</span></button>{openMenuId === f.id && <div className="file-menu" role="menu">{isImage(f) && <button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); openPreview(f) }}>View</button>}<button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); download(f) }}>Download</button><button type="button" role="menuitem" onClick={() => startRename('file', f)}>Rename</button><button type="button" role="menuitem" className="danger" onClick={() => { setOpenMenuId(null); removeFile(f) }}>Delete</button></div>}</div></div>
         </div>)}
       </div>
     </div>

@@ -1,8 +1,8 @@
 import { supabase } from './supabase'
-import { publishExplorerImage } from './explorerImages'
+import { isImageFile, prepareExplorerFile, publishExplorerImage } from './explorerImages'
 
 const imageName = name => name.split('/').pop().replace(/\.[^.]+$/, '').trim().toLowerCase()
-const isImage = file => file.content_type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(file.name)
+const isImage = file => isImageFile({ name: file.name, type: file.content_type })
 
 export function puppyStoragePath(url) {
   try {
@@ -24,11 +24,13 @@ async function allRows(table, columns) {
   }
 }
 
-export async function signature(blob) {
+export async function signature(blob, name = '') {
   const digest = await crypto.subtle.digest('SHA-256', await blob.arrayBuffer())
   const hash = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('')
   try {
-    const image = await createImageBitmap(blob)
+    const readable = /hei[cf]/i.test(blob.type) || /\.(heic|heif)(?:\?|$)/i.test(name)
+      ? await prepareExplorerFile(new File([blob], name.split('/').pop() || 'photo.heic', { type: blob.type })) : blob
+    const image = await createImageBitmap(readable)
     const canvas = document.createElement('canvas')
     canvas.width = 9; canvas.height = 8
     const context = canvas.getContext('2d')
@@ -71,14 +73,14 @@ export async function scanPuppyPhotoDuplicates(onProgress) {
     onProgress(`Checking explorer image ${index + 1} of ${images.length}`)
     const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
     if (error) continue
-    imageSignatures.push({ file, signature: await signature(data) })
+    imageSignatures.push({ file, signature: await signature(data, file.name) })
   }
   const sourceSignatures = new Map()
   const uniqueUrls = [...new Set(references.map(row => row.url).filter(url => !alreadyLinked.has(url)))]
   for (const [index, url] of uniqueUrls.entries()) {
     onProgress(`Checking puppy photo ${index + 1} of ${uniqueUrls.length}`)
     const { data, error } = await supabase.storage.from('puppy-photos').download(puppyStoragePath(url))
-    if (!error) sourceSignatures.set(url, await signature(data))
+    if (!error) sourceSignatures.set(url, await signature(data, url))
   }
   const matches = references.filter(row => sourceSignatures.has(row.url)).map(row => {
     const source = sourceSignatures.get(row.url)
