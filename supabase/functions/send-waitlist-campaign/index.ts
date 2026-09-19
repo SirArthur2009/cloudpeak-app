@@ -24,26 +24,30 @@ serve(async req => {
     const payload = await req.json()
     const subject = String(payload.subject || '').trim()
     const message = String(payload.message || '').trim()
-    const litterId = payload.litter_id || null
+    const audience = String(payload.audience || 'waitlists')
+    const litterId = audience.startsWith('litter:') ? audience.slice(7) : null
     if (!subject || subject.length > 300 || !message || message.length > 20000) return reply({ error: 'Invalid subject or message' }, 400)
+    if (!['waitlists', 'everyone', 'applicants'].includes(audience) && !litterId) return reply({ error: 'Invalid audience' }, 400)
     if (litterId && !/^\d+$/.test(String(litterId))) return reply({ error: 'Invalid litter' }, 400)
     if (litterId) {
       const { data: litter } = await db.from('litters').select('id').eq('id', litterId).maybeSingle()
       if (!litter) return reply({ error: 'Litter not found' }, 404)
     }
 
-    // Page through the waitlist so the database default row limit never drops recipients.
+    // Page through each source so the database default row limit never drops recipients.
     const addresses = new Set<string>()
-    for (let offset = 0; ; offset += 1000) {
-      let query = db.from('waitlist').select('email').order('id').range(offset, offset + 999)
-      if (litterId) query = query.eq('litter_id', litterId)
-      const { data, error } = await query
-      if (error) throw error
-      for (const row of data || []) {
-        const email = String(row.email || '').trim().toLowerCase()
-        if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) addresses.add(email)
+    for (const table of audience === 'everyone' ? ['waitlist', 'applications'] : audience === 'applicants' ? ['applications'] : ['waitlist']) {
+      for (let offset = 0; ; offset += 1000) {
+        let query = db.from(table).select('email').order('id').range(offset, offset + 999)
+        if (litterId) query = query.eq('litter_id', litterId)
+        const { data, error } = await query
+        if (error) throw error
+        for (const row of data || []) {
+          const email = String(row.email || '').trim().toLowerCase()
+          if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) addresses.add(email)
+        }
+        if ((data || []).length < 1000) break
       }
-      if ((data || []).length < 1000) break
     }
     if (addresses.size > 1000) return reply({ error: 'This group is too large to send in one campaign.' }, 400)
 
