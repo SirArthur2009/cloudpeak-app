@@ -16,14 +16,30 @@ const safeZipName = name => (name.replace(/[\\/]/g, '_').replace(/^\.+$/, '_') |
 const PAGE_SIZE = 100
 const EMPTY_ROWS = []
 
-async function fetchAllRows(table) {
+async function fetchAllRows(table, folderId) {
   const rows = []
   for (let offset = 0; ; offset += 500) {
-    const { data, error } = await supabase.from(table).select('*').order('name').order('id').range(offset, offset + 499)
+    let query = supabase.from(table).select('*').order('name').order('id').range(offset, offset + 499)
+    if (table === 'admin_files') query = folderId === null ? query.is('folder_id', null) : query.eq('folder_id', folderId)
+    const { data, error } = await query
     if (error) throw error
     rows.push(...data)
     if (data.length < 500) return rows
   }
+}
+
+async function fetchFolderFiles(folderIds) {
+  const files = []
+  for (let start = 0; start < folderIds.length; start += 100) {
+    const ids = folderIds.slice(start, start + 100)
+    for (let offset = 0; ; offset += 500) {
+      const { data, error } = await supabase.from('admin_files').select('*').in('folder_id', ids).order('name').order('id').range(offset, offset + 499)
+      if (error) throw error
+      files.push(...data)
+      if (data.length < 500) break
+    }
+  }
+  return files
 }
 
 function folderContents(root, allFolders, allFiles) {
@@ -117,7 +133,9 @@ function FileThumbnail({ file }) {
 export default function AdminFiles({ onOpenCleanup }) {
   const [folders, setFolders] = useState([])
   const [files, setFiles] = useState([])
+  const [listingLoading, setListingLoading] = useState(true)
   const [folderId, setFolderId] = useState(null)
+  const activeFolderId = useRef(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [editing, setEditing] = useState(null)
@@ -126,6 +144,7 @@ export default function AdminFiles({ onOpenCleanup }) {
   const [preview, setPreview] = useState(null)
   const previewRequest = useRef(0)
   const previewCache = useRef(new Map())
+  const listingRequest = useRef(0)
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkName, setBulkName] = useState('')
   const [search, setSearch] = useState('')
@@ -173,18 +192,20 @@ export default function AdminFiles({ onOpenCleanup }) {
     previewCache.current.clear()
   }, [preview])
 
-  async function refresh() {
-    const [nextFolders, nextFiles] = await Promise.all([fetchAllRows('admin_folders'), fetchAllRows('admin_files')])
-    setFolders(nextFolders)
-    setFiles(nextFiles)
-  }
-  useEffect(() => {
-    let active = true
-    Promise.all([fetchAllRows('admin_folders'), fetchAllRows('admin_files')])
-      .then(([nextFolders, nextFiles]) => { if (active) { setFolders(nextFolders); setFiles(nextFiles) } })
-      .catch(error => { if (active) setMessage(error.message) })
-    return () => { active = false }
+  const refresh = useCallback(async (targetFolderId = activeFolderId.current) => {
+    const request = ++listingRequest.current
+    const [nextFolders, nextFiles] = await Promise.all([fetchAllRows('admin_folders'), fetchAllRows('admin_files', targetFolderId)])
+    if (request === listingRequest.current) {
+      setFolders(nextFolders)
+      setFiles(nextFiles)
+      setListingLoading(false)
+    }
   }, [])
+  useEffect(() => {
+    const requestRef = listingRequest
+    refresh(folderId).catch(error => { setListingLoading(false); setMessage(error.message) })
+    return () => { requestRef.current++ }
+  }, [folderId, refresh])
 
   const foldersByParent = useMemo(() => {
     const grouped = new Map()
@@ -194,16 +215,8 @@ export default function AdminFiles({ onOpenCleanup }) {
     }
     return grouped
   }, [folders])
-  const filesByFolder = useMemo(() => {
-    const grouped = new Map()
-    for (const file of files) {
-      if (!grouped.has(file.folder_id)) grouped.set(file.folder_id, [])
-      grouped.get(file.folder_id).push(file)
-    }
-    return grouped
-  }, [files])
   const children = foldersByParent.get(folderId) || EMPTY_ROWS
-  const currentFiles = filesByFolder.get(folderId) || EMPTY_ROWS
+  const currentFiles = files
   const folderImages = useMemo(() => currentFiles.filter(isImage), [currentFiles])
   const visibleFiles = useMemo(() => currentFiles.filter(file => file.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'all' || filter === 'images' && isImage(file) || filter === 'other' && !isImage(file) || filter === 'public' && file.storage_bucket && file.storage_bucket !== 'admin-files')), [currentFiles, search, filter])
   const displayedFiles = visibleFiles.slice(0, visibleCount)
@@ -230,7 +243,10 @@ export default function AdminFiles({ onOpenCleanup }) {
   collectFolders(null, 0)
 
   function goToFolder(id) {
-    setFolderId(id); setSelectedIds([]); setSearch(''); setFilter('all'); setVisibleCount(PAGE_SIZE); setEditing(null); setOpenMenuId(null)
+    setListingLoading(true)
+    if (id === folderId) refresh().catch(error => { setListingLoading(false); setMessage(error.message) })
+    else { activeFolderId.current = id; setFolderId(id); setFiles([]) }
+    setSelectedIds([]); setSearch(''); setFilter('all'); setVisibleCount(PAGE_SIZE); setEditing(null); setOpenMenuId(null)
   }
 
   async function run(action) {
@@ -369,14 +385,16 @@ export default function AdminFiles({ onOpenCleanup }) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [preview, openAdjacentPreview])
   async function download(file) {
-    run(async () => {
+    setBusy(true); setMessage('')
+    try {
       const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
       if (error) throw error
       const url = URL.createObjectURL(data)
       const link = document.createElement('a')
       link.href = url; link.download = file.name; document.body.append(link); link.click(); link.remove()
       setTimeout(() => URL.revokeObjectURL(url), 60000)
-    })
+    } catch (error) { setMessage(error.message) }
+    finally { setBusy(false) }
   }
   function startRename(type, item) {
     setOpenMenuId(null)
@@ -465,7 +483,11 @@ export default function AdminFiles({ onOpenCleanup }) {
     })
   }
   async function removeFolder(folder) {
-    const contents = folderContents(folder, folders, files)
+    let contents
+    try {
+      const tree = folderContents(folder, folders, EMPTY_ROWS)
+      contents = { entries: tree.entries, files: await fetchFolderFiles(tree.entries.map(entry => entry.folder.id)) }
+    } catch (error) { setMessage(error.message); return }
     if (!confirm(`Delete “${folder.name}” and everything inside it (${contents.files.length} files, ${contents.entries.length} folders)? This cannot be undone.`)) return
     await run(async () => {
       const publicFiles = contents.files.filter(file => (file.storage_bucket || 'admin-files') !== 'admin-files')
@@ -502,7 +524,9 @@ export default function AdminFiles({ onOpenCleanup }) {
     setBusy(true); setMessage(''); setOpenMenuId(null)
     try {
       const { default: JSZip } = await import('jszip')
-      const { entries, files: folderFiles } = folderContents(folder, folders, files)
+      const tree = folderContents(folder, folders, EMPTY_ROWS)
+      const entries = tree.entries
+      const folderFiles = await fetchFolderFiles(entries.map(entry => entry.folder.id))
       const zip = new JSZip()
       const paths = new Map(entries.map(entry => [entry.folder.id, entry.path]))
       entries.forEach(entry => zip.folder(entry.path))
@@ -578,8 +602,8 @@ export default function AdminFiles({ onOpenCleanup }) {
       <aside className="file-sidebar" aria-label="Folder navigation">
         <div className="file-sidebar-heading">BROWSE <span>{folders.length} folders</span></div>
         <nav className="file-folder-tree" aria-label="Folders">
-          <button type="button" className={folderId === null ? 'active' : ''} onClick={() => goToFolder(null)}><span className="file-sidebar-symbol">⌂</span><span>Files home</span><small>{(filesByFolder.get(null) || EMPTY_ROWS).length}</small></button>
-          {folderNav.map(folder => <button type="button" key={folder.id} className={folderId === folder.id ? 'active' : ''} style={{ '--folder-depth': folder.depth }} onClick={() => goToFolder(folder.id)} title={folder.name}><span className="file-sidebar-symbol">▰</span><span>{folder.name}</span><small>{(filesByFolder.get(folder.id) || EMPTY_ROWS).length}</small></button>)}
+          <button type="button" className={folderId === null ? 'active' : ''} onClick={() => goToFolder(null)}><span className="file-sidebar-symbol">⌂</span><span>Files home</span>{folderId === null && <small>{files.length}</small>}</button>
+          {folderNav.map(folder => <button type="button" key={folder.id} className={folderId === folder.id ? 'active' : ''} style={{ '--folder-depth': folder.depth }} onClick={() => goToFolder(folder.id)} title={folder.name}><span className="file-sidebar-symbol">▰</span><span>{folder.name}</span>{folderId === folder.id && <small>{files.length}</small>}</button>)}
         </nav>
         <div className="file-sidebar-note"><strong>Private by default</strong><span>Photos used on the site are marked Public.</span>{onOpenCleanup && <button type="button" onClick={onOpenCleanup}>Review duplicate photos →</button>}</div>
       </aside>
@@ -617,7 +641,8 @@ export default function AdminFiles({ onOpenCleanup }) {
       {message && <p className="file-error" role="alert">{message}</p>}
       <div className="file-table" role="table" aria-label="Files and folders">
         <div className="file-table-head" role="row"><span>Name</span><span>Type</span><span>Size</span><span>Date added</span><span>Actions</span></div>
-        {!visibleFolders.length && !visibleFiles.length && <div className="file-empty"><FileGlyph folder /><strong>{search || filter !== 'all' ? 'No matching files' : 'This folder is empty'}</strong><p>{search || filter !== 'all' ? 'Try another search or filter.' : 'Create a folder or upload files to get started.'}</p></div>}
+        {listingLoading && <div className="file-empty" role="status">Loading files…</div>}
+        {!listingLoading && !visibleFolders.length && !visibleFiles.length && <div className="file-empty"><FileGlyph folder /><strong>{search || filter !== 'all' ? 'No matching files' : 'This folder is empty'}</strong><p>{search || filter !== 'all' ? 'Try another search or filter.' : 'Create a folder or upload files to get started.'}</p></div>}
         {visibleFolders.map(f => <div className="file-row" role="row" key={f.id}>
           <div className="file-item"><FileGlyph folder />{renderName('folder', f)}</div>
           <span className="file-meta">Folder</span><span className="file-meta">—</span><span className="file-meta">{formatDate(f.created_at)}</span>
