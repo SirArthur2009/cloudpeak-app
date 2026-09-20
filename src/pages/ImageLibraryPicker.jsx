@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { browserPreviewBlob, isHeicFile } from '../lib/explorerImages'
+import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 import './ImageLibraryPicker.css'
 
 function PickerThumbnail({ file }) {
@@ -32,7 +33,7 @@ function PickerThumbnail({ file }) {
           const url = supabase.storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
           if (active) setPreview({ url, error: '' })
         } else {
-          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(file.storage_path, 3600)
+          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(file.storage_path, 3600, { transform: { width: 320, quality: 75 } })
           if (error) throw error
           if (active) setPreview({ url: data.signedUrl, error: '' })
         }
@@ -42,7 +43,14 @@ function PickerThumbnail({ file }) {
     return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [visible, file])
   return <span ref={tileRef} className="image-library-photo">
-    {preview.url ? <img src={preview.url} alt="" loading="lazy" draggable="false" onError={() => setPreview({ url: '', error: 'Preview unavailable' })} /> : <span className="image-library-placeholder" title={preview.error}><span aria-hidden="true">▧</span><small>{preview.error || (visible ? 'Loading photo…' : 'Photo')}</small></span>}
+    {preview.url ? <img src={file.storage_bucket && file.storage_bucket !== 'admin-files' ? sizedImageUrl(preview.url, 320) : preview.url} alt="" loading="lazy" decoding="async" draggable="false" onError={event => {
+      if (file.storage_bucket && file.storage_bucket !== 'admin-files') { originalOnError(event, preview.url); return }
+      if (event.currentTarget.dataset.fallback) { setPreview({ url: '', error: 'Preview unavailable' }); return }
+      event.currentTarget.dataset.fallback = 'true'
+      supabase.storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
+        if (data?.signedUrl && event.target?.isConnected) event.target.src = data.signedUrl
+      })
+    }} /> : <span className="image-library-placeholder" title={preview.error}><span aria-hidden="true">▧</span><small>{preview.error || (visible ? 'Loading photo…' : 'Photo')}</small></span>}
   </span>
 }
 

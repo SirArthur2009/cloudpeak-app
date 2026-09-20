@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as tus from 'tus-js-client'
 import { browserPreviewBlob, prepareExplorerFile } from '../lib/explorerImages'
+import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 import { convertPhotosToPng } from '../lib/convertPhotosToPng'
 import { estimatedTimeRemaining } from '../lib/progressEta'
 import './AdminFiles.css'
@@ -12,16 +13,33 @@ const fileKind = file => file.content_type?.startsWith('image/') ? 'Image' : fil
 const extensionOf = name => { const dot = name.lastIndexOf('.'); return dot > 0 ? name.slice(dot) : '' }
 const isImage = file => file.content_type?.startsWith('image/') || /\.(jpe?g|png|webp|gif|heic|heif|avif)$/i.test(file.name)
 const safeZipName = name => (name.replace(/[\\/]/g, '_').replace(/^\.+$/, '_') || 'Untitled')
+const PAGE_SIZE = 100
+const EMPTY_ROWS = []
+
+async function fetchAllRows(table) {
+  const rows = []
+  for (let offset = 0; ; offset += 500) {
+    const { data, error } = await supabase.from(table).select('*').order('name').order('id').range(offset, offset + 499)
+    if (error) throw error
+    rows.push(...data)
+    if (data.length < 500) return rows
+  }
+}
 
 function folderContents(root, allFolders, allFiles) {
   const entries = []
   const seen = new Set()
+  const childrenByParent = new Map()
+  for (const folder of allFolders) {
+    if (!childrenByParent.has(folder.parent_id)) childrenByParent.set(folder.parent_id, [])
+    childrenByParent.get(folder.parent_id).push(folder)
+  }
   function visit(folder, path, depth) {
     if (seen.has(folder.id)) return
     seen.add(folder.id)
     entries.push({ folder, path, depth })
     const usedNames = new Set()
-    for (const child of allFolders.filter(item => item.parent_id === folder.id)) {
+    for (const child of childrenByParent.get(folder.id) || EMPTY_ROWS) {
       const base = safeZipName(child.name)
       let name = base
       let number = 2
@@ -42,16 +60,58 @@ function FileGlyph({ folder = false, image = false }) {
   </span>
 }
 
-function FileThumbnail({ file }) {
-  const [url, setUrl] = useState('')
-  useEffect(() => {
-    let active = true
-    supabase.storage.from(file.storage_bucket || 'admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
-      if (active) setUrl(data?.signedUrl || '')
+async function loadPreviewUrl(file) {
+  const storage = supabase.storage.from(file.storage_bucket || 'admin-files')
+  const transform = /\.(gif|svg|heic|heif)$/i.test(file.name) ? undefined : { transform: { width: 1600, quality: 85 } }
+  let { data, error } = await storage.download(file.storage_path, transform)
+  if (error && transform) ({ data, error } = await storage.download(file.storage_path))
+  if (error) throw error
+  return URL.createObjectURL(await browserPreviewBlob(data, file))
+}
+
+const thumbnailUrlCache = new Map()
+function signedThumbnailUrl(path) {
+  const cached = thumbnailUrlCache.get(path)
+  if (cached && cached.expires > Date.now()) return cached.promise
+  const promise = supabase.storage.from('admin-files').createSignedUrl(path, 3600, { transform: { width: 120, quality: 75 } })
+    .then(({ data, error }) => {
+      if (error) throw error
+      return data.signedUrl
     })
+  thumbnailUrlCache.set(path, { promise, expires: Date.now() + 50 * 60 * 1000 })
+  promise.catch(() => thumbnailUrlCache.delete(path))
+  return promise
+}
+
+function FileThumbnail({ file }) {
+  const thumbnailRef = useRef(null)
+  const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === 'undefined')
+  const [url, setUrl] = useState('')
+  const publicUrl = file.storage_bucket && file.storage_bucket !== 'admin-files'
+    ? supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl : ''
+  useEffect(() => {
+    if (nearViewport || !thumbnailRef.current || !('IntersectionObserver' in window)) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries[0]?.isIntersecting) { setNearViewport(true); observer.disconnect() }
+    }, { rootMargin: '300px' })
+    observer.observe(thumbnailRef.current)
+    return () => observer.disconnect()
+  }, [nearViewport])
+  useEffect(() => {
+    if (!nearViewport || publicUrl) return
+    let active = true
+    signedThumbnailUrl(file.storage_path).then(value => { if (active) setUrl(value) }).catch(() => {})
     return () => { active = false }
-  }, [file.storage_bucket, file.storage_path])
-  return url ? <img className="file-thumbnail" src={url} alt="" loading="lazy" /> : <FileGlyph image />
+  }, [nearViewport, publicUrl, file.storage_path])
+  const fallback = event => {
+    if (publicUrl) { originalOnError(event, publicUrl); return }
+    if (event.currentTarget.dataset.fallback) return
+    event.currentTarget.dataset.fallback = 'true'
+    supabase.storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
+      if (data?.signedUrl && event.target?.isConnected) event.target.src = data.signedUrl
+    })
+  }
+  return <span ref={thumbnailRef} className="file-thumbnail-wrap">{nearViewport && (publicUrl || url) ? <img className="file-thumbnail" src={publicUrl ? sizedImageUrl(publicUrl, 120) : url} onError={fallback} alt="" loading="lazy" decoding="async" /> : <FileGlyph image />}</span>
 }
 
 export default function AdminFiles({ onOpenCleanup }) {
@@ -65,10 +125,12 @@ export default function AdminFiles({ onOpenCleanup }) {
   const [uploadProgress, setUploadProgress] = useState(null)
   const [preview, setPreview] = useState(null)
   const previewRequest = useRef(0)
+  const previewCache = useRef(new Map())
   const [selectedIds, setSelectedIds] = useState([])
   const [bulkName, setBulkName] = useState('')
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [creatingFolder, setCreatingFolder] = useState(false)
   const [newFolderName, setNewFolderName] = useState('')
   const [openMenuId, setOpenMenuId] = useState(null)
@@ -98,37 +160,56 @@ export default function AdminFiles({ onOpenCleanup }) {
     if (!preview) return
     const onKeyDown = event => { if (event.key === 'Escape') { previewRequest.current++; setPreview(null) } }
     window.addEventListener('keydown', onKeyDown)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      if (preview.url) URL.revokeObjectURL(preview.url)
-    }
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [preview])
+
+  useEffect(() => () => {
+    for (const entry of previewCache.current.values()) entry.then(url => URL.revokeObjectURL(url)).catch(() => {})
+    previewCache.current.clear()
+  }, [])
+  useEffect(() => {
+    if (preview) return
+    for (const entry of previewCache.current.values()) entry.then(url => URL.revokeObjectURL(url)).catch(() => {})
+    previewCache.current.clear()
   }, [preview])
 
   async function refresh() {
-    const [folderResult, fileResult] = await Promise.all([
-      supabase.from('admin_folders').select('*').order('name'),
-      supabase.from('admin_files').select('*').order('name')
-    ])
-    if (folderResult.error || fileResult.error) { setMessage(folderResult.error?.message || fileResult.error?.message); return }
-    setFolders(folderResult.data || [])
-    setFiles(fileResult.data || [])
+    const [nextFolders, nextFiles] = await Promise.all([fetchAllRows('admin_folders'), fetchAllRows('admin_files')])
+    setFolders(nextFolders)
+    setFiles(nextFiles)
   }
   useEffect(() => {
-    Promise.all([
-      supabase.from('admin_folders').select('*').order('name'),
-      supabase.from('admin_files').select('*').order('name')
-    ]).then(([folderResult, fileResult]) => {
-      if (folderResult.error || fileResult.error) { setMessage(folderResult.error?.message || fileResult.error?.message); return }
-      setFolders(folderResult.data || []); setFiles(fileResult.data || [])
-    })
+    let active = true
+    Promise.all([fetchAllRows('admin_folders'), fetchAllRows('admin_files')])
+      .then(([nextFolders, nextFiles]) => { if (active) { setFolders(nextFolders); setFiles(nextFiles) } })
+      .catch(error => { if (active) setMessage(error.message) })
+    return () => { active = false }
   }, [])
 
-  const children = folders.filter(f => f.parent_id === folderId)
-  const currentFiles = files.filter(f => f.folder_id === folderId)
-  const folderImages = currentFiles.filter(isImage)
-  const visibleFiles = currentFiles.filter(file => file.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'all' || filter === 'images' && isImage(file) || filter === 'other' && !isImage(file) || filter === 'public' && file.storage_bucket && file.storage_bucket !== 'admin-files'))
+  const foldersByParent = useMemo(() => {
+    const grouped = new Map()
+    for (const folder of folders) {
+      if (!grouped.has(folder.parent_id)) grouped.set(folder.parent_id, [])
+      grouped.get(folder.parent_id).push(folder)
+    }
+    return grouped
+  }, [folders])
+  const filesByFolder = useMemo(() => {
+    const grouped = new Map()
+    for (const file of files) {
+      if (!grouped.has(file.folder_id)) grouped.set(file.folder_id, [])
+      grouped.get(file.folder_id).push(file)
+    }
+    return grouped
+  }, [files])
+  const children = foldersByParent.get(folderId) || EMPTY_ROWS
+  const currentFiles = filesByFolder.get(folderId) || EMPTY_ROWS
+  const folderImages = useMemo(() => currentFiles.filter(isImage), [currentFiles])
+  const visibleFiles = useMemo(() => currentFiles.filter(file => file.name.toLowerCase().includes(search.toLowerCase()) && (filter === 'all' || filter === 'images' && isImage(file) || filter === 'other' && !isImage(file) || filter === 'public' && file.storage_bucket && file.storage_bucket !== 'admin-files')), [currentFiles, search, filter])
+  const displayedFiles = visibleFiles.slice(0, visibleCount)
   const visibleFolders = filter === 'all' ? children.filter(folder => folder.name.toLowerCase().includes(search.toLowerCase())) : []
-  const selectedFiles = visibleFiles.filter(f => selectedIds.includes(f.id))
+  const selectedIdSet = new Set(selectedIds)
+  const selectedFiles = visibleFiles.filter(f => selectedIdSet.has(f.id))
   const current = folders.find(f => f.id === folderId)
   const crumbs = []
   let ancestor = current
@@ -139,7 +220,7 @@ export default function AdminFiles({ onOpenCleanup }) {
   const folderNav = []
   const visitedFolders = new Set()
   function collectFolders(parentId, depth) {
-    for (const folder of folders.filter(item => item.parent_id === parentId)) {
+    for (const folder of foldersByParent.get(parentId) || []) {
       if (visitedFolders.has(folder.id)) continue
       visitedFolders.add(folder.id)
       folderNav.push({ ...folder, depth })
@@ -149,7 +230,7 @@ export default function AdminFiles({ onOpenCleanup }) {
   collectFolders(null, 0)
 
   function goToFolder(id) {
-    setFolderId(id); setSelectedIds([]); setSearch(''); setFilter('all'); setEditing(null); setOpenMenuId(null)
+    setFolderId(id); setSelectedIds([]); setSearch(''); setFilter('all'); setVisibleCount(PAGE_SIZE); setEditing(null); setOpenMenuId(null)
   }
 
   async function run(action) {
@@ -237,23 +318,47 @@ export default function AdminFiles({ onOpenCleanup }) {
     const request = ++previewRequest.current
     setPreview({ id: file.id, name: file.name, loading: true })
     try {
-      const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
-      if (error) throw error
-      const url = URL.createObjectURL(await browserPreviewBlob(data, file))
-      if (request !== previewRequest.current) { URL.revokeObjectURL(url); return }
+      let pending = previewCache.current.get(file.id)
+      if (!pending) {
+        pending = loadPreviewUrl(file)
+        previewCache.current.set(file.id, pending)
+        pending.catch(() => { if (previewCache.current.get(file.id) === pending) previewCache.current.delete(file.id) })
+      }
+      const url = await pending
+      if (request !== previewRequest.current) return
       setPreview({ id: file.id, name: file.name, url })
     } catch (error) {
       if (request === previewRequest.current) { setPreview(null); setMessage(error.message) }
     }
   }, [])
+  useEffect(() => {
+    if (!preview?.url || folderImages.length < 2) return
+    const index = folderImages.findIndex(file => file.id === preview.id)
+    if (index < 0) return
+    const keep = new Set([preview.id])
+    for (const offset of [-1, 1]) {
+      const file = folderImages[(index + offset + folderImages.length) % folderImages.length]
+      keep.add(file.id)
+      if (!previewCache.current.has(file.id)) {
+        const pending = loadPreviewUrl(file)
+        previewCache.current.set(file.id, pending)
+        pending.catch(() => { if (previewCache.current.get(file.id) === pending) previewCache.current.delete(file.id) })
+      }
+    }
+    for (const [id, pending] of previewCache.current) {
+      if (!keep.has(id)) {
+        previewCache.current.delete(id)
+        pending.then(url => URL.revokeObjectURL(url)).catch(() => {})
+      }
+    }
+  }, [preview?.id, preview?.url, folderImages])
   const openAdjacentPreview = useCallback(direction => {
     if (!preview) return
-    const images = files.filter(file => file.folder_id === folderId && isImage(file))
-    const currentIndex = images.findIndex(file => file.id === preview.id)
-    if (currentIndex < 0 || images.length < 2) return
-    const next = images[(currentIndex + direction + images.length) % images.length]
+    const currentIndex = folderImages.findIndex(file => file.id === preview.id)
+    if (currentIndex < 0 || folderImages.length < 2) return
+    const next = folderImages[(currentIndex + direction + folderImages.length) % folderImages.length]
     openPreview(next)
-  }, [preview, files, folderId, openPreview])
+  }, [preview, folderImages, openPreview])
   useEffect(() => {
     if (!preview) return
     const onKeyDown = event => {
@@ -402,10 +507,7 @@ export default function AdminFiles({ onOpenCleanup }) {
       const paths = new Map(entries.map(entry => [entry.folder.id, entry.path]))
       entries.forEach(entry => zip.folder(entry.path))
       const usedPaths = new Set()
-      for (const [index, file] of folderFiles.entries()) {
-        setFolderProgress({ name: file.name, percent: Math.round(index / Math.max(folderFiles.length, 1) * 80) })
-        const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
-        if (error) throw error
+      const downloads = folderFiles.map(file => {
         const base = safeZipName(file.name)
         const stem = base.slice(0, base.length - extensionOf(base).length)
         const ext = extensionOf(base)
@@ -414,7 +516,19 @@ export default function AdminFiles({ onOpenCleanup }) {
         while (usedPaths.has(`${paths.get(file.folder_id)}/${name}`.toLowerCase())) name = `${stem} (${number++})${ext}`
         const path = `${paths.get(file.folder_id)}/${name}`
         usedPaths.add(path.toLowerCase())
-        zip.file(path, data)
+        return { file, path }
+      })
+      let completed = 0
+      for (let index = 0; index < downloads.length; index += 3) {
+        const batch = downloads.slice(index, index + 3)
+        const blobs = await Promise.all(batch.map(async ({ file }) => {
+          const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          if (error) throw error
+          completed++
+          setFolderProgress({ name: file.name, percent: Math.round(completed / Math.max(downloads.length, 1) * 80) })
+          return data
+        }))
+        batch.forEach(({ path }, position) => zip.file(path, blobs[position]))
       }
       setFolderProgress({ name: 'Creating ZIP archive', percent: 80 })
       const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' }, metadata => setFolderProgress({ name: 'Creating ZIP archive', percent: 80 + Math.round(metadata.percent * .2) }))
@@ -464,8 +578,8 @@ export default function AdminFiles({ onOpenCleanup }) {
       <aside className="file-sidebar" aria-label="Folder navigation">
         <div className="file-sidebar-heading">BROWSE <span>{folders.length} folders</span></div>
         <nav className="file-folder-tree" aria-label="Folders">
-          <button type="button" className={folderId === null ? 'active' : ''} onClick={() => goToFolder(null)}><span className="file-sidebar-symbol">⌂</span><span>Files home</span><small>{files.filter(file => file.folder_id === null).length}</small></button>
-          {folderNav.map(folder => <button type="button" key={folder.id} className={folderId === folder.id ? 'active' : ''} style={{ '--folder-depth': folder.depth }} onClick={() => goToFolder(folder.id)} title={folder.name}><span className="file-sidebar-symbol">▰</span><span>{folder.name}</span><small>{files.filter(file => file.folder_id === folder.id).length}</small></button>)}
+          <button type="button" className={folderId === null ? 'active' : ''} onClick={() => goToFolder(null)}><span className="file-sidebar-symbol">⌂</span><span>Files home</span><small>{(filesByFolder.get(null) || EMPTY_ROWS).length}</small></button>
+          {folderNav.map(folder => <button type="button" key={folder.id} className={folderId === folder.id ? 'active' : ''} style={{ '--folder-depth': folder.depth }} onClick={() => goToFolder(folder.id)} title={folder.name}><span className="file-sidebar-symbol">▰</span><span>{folder.name}</span><small>{(filesByFolder.get(folder.id) || EMPTY_ROWS).length}</small></button>)}
         </nav>
         <div className="file-sidebar-note"><strong>Private by default</strong><span>Photos used on the site are marked Public.</span>{onOpenCleanup && <button type="button" onClick={onOpenCleanup}>Review duplicate photos →</button>}</div>
       </aside>
@@ -485,11 +599,11 @@ export default function AdminFiles({ onOpenCleanup }) {
         {crumbs.map(f => <span key={f.id} className="file-crumb"><span aria-hidden="true">›</span><button onClick={() => goToFolder(f.id)} aria-current={folderId === f.id ? 'page' : undefined}>{f.name}</button></span>)}
       </nav>
       <div className="file-location"><div><strong>{current?.name || 'Files home'}</strong><span>{children.length} folders · {currentFiles.length} files</span></div>{current && <div className="file-location-actions"><button type="button" disabled={busy} onClick={() => downloadFolder(current)}>Download folder</button><button type="button" className="danger" disabled={busy} onClick={() => removeFolder(current)}>Delete folder</button></div>}</div>
-      <div className="file-controls"><label className="file-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search this folder" placeholder="Search this folder" value={search} onChange={event => { setSearch(event.target.value); setSelectedIds([]) }} /></label><div className="file-filters" role="group" aria-label="Filter files">
-        {[['all', 'All'], ['images', 'Images'], ['other', 'Other files'], ['public', 'Public']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => { setFilter(value); setSelectedIds([]) }}>{label}</button>)}
+      <div className="file-controls"><label className="file-search"><span aria-hidden="true">⌕</span><input type="search" aria-label="Search this folder" placeholder="Search this folder" value={search} onChange={event => { setSearch(event.target.value); setVisibleCount(PAGE_SIZE); setSelectedIds([]) }} /></label><div className="file-filters" role="group" aria-label="Filter files">
+        {[['all', 'All'], ['images', 'Images'], ['other', 'Other files'], ['public', 'Public']].map(([value, label]) => <button type="button" key={value} className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => { setFilter(value); setVisibleCount(PAGE_SIZE); setSelectedIds([]) }}>{label}</button>)}
       </div></div>
       {visibleFiles.length > 0 && <div className="file-selection-toolbar">
-        <label><input type="checkbox" checked={selectedFiles.length === visibleFiles.length} onChange={event => setSelectedIds(event.target.checked ? visibleFiles.map(file => file.id) : [])} disabled={busy} /> Select all shown</label>
+        <label><input type="checkbox" checked={selectedFiles.length === visibleFiles.length} onChange={event => setSelectedIds(event.target.checked ? visibleFiles.map(file => file.id) : [])} disabled={busy} /> Select all matches</label>
         <span>{selectedFiles.length} selected</span>
         {selectedFiles.length > 0 && <button type="button" disabled={busy} onClick={() => setSelectedIds([])}>Clear selection</button>}
         <small>Desktop: press on a file row and drag across rows. Mobile: tap checkboxes.</small>
@@ -509,12 +623,13 @@ export default function AdminFiles({ onOpenCleanup }) {
           <span className="file-meta">Folder</span><span className="file-meta">—</span><span className="file-meta">{formatDate(f.created_at)}</span>
           <div className="file-actions"><button disabled={busy} onClick={() => downloadFolder(f)}>Download</button><button disabled={busy} onClick={() => startRename('folder', f)}>Rename</button><button className="danger" disabled={busy} onClick={() => removeFolder(f)}>Delete</button></div>
         </div>)}
-        {visibleFiles.map(f => <div className={`file-row file-selectable-row${selectedIds.includes(f.id) ? ' selected' : ''}`} role="row" key={f.id} onPointerDown={event => selectRow(event, f.id)} onPointerEnter={event => extendSelection(event, f.id)}>
-          <div className="file-item"><input className="file-select-checkbox" type="checkbox" checked={selectedIds.includes(f.id)} onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))} disabled={busy} aria-label={`Select ${f.name}`} />{isImage(f) ? <FileThumbnail file={f} /> : <FileGlyph />}{renderName('file', f)}</div>
+        {displayedFiles.map(f => <div className={`file-row file-selectable-row${selectedIdSet.has(f.id) ? ' selected' : ''}`} role="row" key={f.id} onPointerDown={event => selectRow(event, f.id)} onPointerEnter={event => extendSelection(event, f.id)}>
+          <div className="file-item"><input className="file-select-checkbox" type="checkbox" checked={selectedIdSet.has(f.id)} onChange={event => setSelectedIds(ids => event.target.checked ? [...ids, f.id] : ids.filter(id => id !== f.id))} disabled={busy} aria-label={`Select ${f.name}`} />{isImage(f) ? <FileThumbnail file={f} /> : <FileGlyph />}{renderName('file', f)}</div>
           <span className="file-meta">{fileKind(f)}{f.storage_bucket && f.storage_bucket !== 'admin-files' && <span className="file-public-label">Public</span>}</span><span className="file-meta">{formatSize(f.size_bytes)}</span><span className="file-meta">{formatDate(f.created_at)}</span>
           <div className="file-actions"><div className="file-menu-wrap"><button type="button" className="file-menu-trigger" disabled={busy} aria-label={`Actions for ${f.name}`} aria-expanded={openMenuId === f.id} aria-haspopup="menu" onClick={() => setOpenMenuId(id => id === f.id ? null : f.id)}>Actions <span aria-hidden="true">▾</span></button>{openMenuId === f.id && <div className="file-menu" role="menu">{isImage(f) && <button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); openPreview(f) }}>View</button>}<button type="button" role="menuitem" onClick={() => { setOpenMenuId(null); download(f) }}>Download</button><button type="button" role="menuitem" onClick={() => startRename('file', f)}>Rename</button><button type="button" role="menuitem" className="danger" onClick={() => { setOpenMenuId(null); removeFile(f) }}>Delete</button></div>}</div></div>
         </div>)}
       </div>
+      {visibleFiles.length > visibleCount && <div className="file-load-more"><span>Showing {displayedFiles.length} of {visibleFiles.length} files</span><button type="button" onClick={() => setVisibleCount(count => count + PAGE_SIZE)}>Show 100 more</button></div>}
     </div>
     </div>
     {preview && <div className="file-preview-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) { previewRequest.current++; setPreview(null) } }}>

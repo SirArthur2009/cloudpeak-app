@@ -1,9 +1,18 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { sizedImageUrl, originalOnError, preloadImage } from '../lib/imageLoading'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
 const isVideo = photo => /\.(mp4|webm|mov)(?:\?|$)/i.test(photo.photo_url)
+
+function preloadGalleryNeighbors(gallery) {
+  if (!gallery) return
+  for (const index of [gallery.photoIndex - 1, gallery.photoIndex + 1]) {
+    const photo = gallery.photos[index]
+    if (photo && !isVideo(photo)) preloadImage(photo.photo_url)
+  }
+}
 
 async function callFunction(name, body) {
   const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
@@ -71,6 +80,7 @@ export default function Puppies() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [assignedLitterId, setAssignedLitterId] = useState('')
   const [gallery, setGallery] = useState(null)
+  useEffect(() => { preloadGalleryNeighbors(gallery) }, [gallery])
 
   useEffect(() => {
     async function fetchAll() {
@@ -390,7 +400,7 @@ export default function Puppies() {
               }}
             >
               {puppy.photo_url
-                ? <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
+                ? <img src={sizedImageUrl(puppy.photo_url, 480)} onError={event => originalOnError(event, puppy.photo_url)} loading="lazy" decoding="async" alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
                 : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
               }
 

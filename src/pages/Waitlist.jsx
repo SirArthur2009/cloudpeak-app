@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
@@ -246,7 +247,7 @@ export default function Waitlist() {
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
                 {availablePuppies.map(puppy => (
                   <div key={puppy.id} onClick={() => setSelectedPuppy(puppy)} style={{ background: selectedPuppy?.id === puppy.id ? '#1a1a1a' : '#fff', color: selectedPuppy?.id === puppy.id ? '#fff' : '#1a1a1a', border: `2px solid ${selectedPuppy?.id === puppy.id ? '#1a1a1a' : '#ddd'}`, borderRadius: '8px', padding: '0.75rem', cursor: 'pointer', transition: 'all 0.15s' }}>
-                    {puppy.photo_url && <img src={puppy.photo_url} alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: '4px', marginBottom: '0.5rem' }} />}
+                    {puppy.photo_url && <img src={sizedImageUrl(puppy.photo_url, 480)} onError={event => originalOnError(event, puppy.photo_url)} loading="lazy" decoding="async" alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', borderRadius: '4px', marginBottom: '0.5rem' }} />}
                     <p style={{ fontWeight: 600, fontSize: '0.95rem' }}>{puppy.name}</p>
                     <p style={{ fontSize: '0.8rem', opacity: 0.75 }}>{puppy.gender} · {puppy.color}</p>
                   </div>

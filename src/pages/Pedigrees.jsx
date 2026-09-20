@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 
 function getDogPhotoUrl(photoUrl) {
   if (!photoUrl) return ''
@@ -48,10 +49,11 @@ function DogPhoto({ name, photoUrl, style, placeholderStyle }) {
 
   return (
     <img
-      src={resolvedUrl}
+      src={sizedImageUrl(resolvedUrl, 480)}
       alt={name}
       loading="lazy"
-      onError={() => setFailed(true)}
+      decoding="async"
+      onError={event => { if (event.currentTarget.src !== resolvedUrl) originalOnError(event, resolvedUrl); else setFailed(true) }}
       style={style}
     />
   )
