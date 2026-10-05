@@ -1,0 +1,91 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Cloudpeak: Railway Database + Storage (Supabase Login)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev:railway",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://[^\\s]+:5173/)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Cloudpeak: Test Deployed Railway Storage",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev:storage:deployed",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Cloudpeak: App + Website",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev:all",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://[^\\s]+:5173/)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Cloudpeak: App + Website + Railway Storage",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev:all:storage",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://[^\\s]+:5173/)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Cloudpeak: Railway Storage (App + Local Signer)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev:storage",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Cloudpeak: Storage Security Tests",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run test:storage",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Debug Vite App (Start Server + Chrome)",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev",
+      "cwd": "${workspaceFolder}",
+      "serverReadyAction": {
+        "pattern": "Local:\\s+(https?://\\S+)",
+        "uriFormat": "%s",
+        "action": "debugWithChrome"
+      }
+    },
+    {
+      "name": "Debug Chrome (localhost:5173)",
+      "type": "pwa-chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}"
+    }
+  ]
+}

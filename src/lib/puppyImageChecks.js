@@ -1,4 +1,4 @@
-import { supabase } from './supabase'
+import { storage } from './storage'
 import { puppyStoragePath, signature, visualDistance } from './duplicatePhotos'
 
 export const isVideoPhoto = url => /\.(mp4|webm|mov)(?:\?|$)/i.test(url)
@@ -6,7 +6,7 @@ export const isVideoPhoto = url => /\.(mp4|webm|mov)(?:\?|$)/i.test(url)
 async function imageBlob(url, signal) {
   const path = puppyStoragePath(url)
   if (path) {
-    const { data, error } = await supabase.storage.from('puppy-photos').download(path, {}, { signal })
+    const { data, error } = await storage.from('puppy-photos').download(path, {}, { signal })
     if (error) throw error
     return data
   }

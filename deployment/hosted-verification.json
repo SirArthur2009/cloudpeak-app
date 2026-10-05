@@ -1,0 +1,18 @@
+{
+  "deploymentId": "eb671aa5-80c3-4a4a-967d-a7996ff6ed3f",
+  "releaseMode": "live",
+  "hostedEmailDelivery": "delivered",
+  "providerId": "01a0fe19-4390-74ca-b62e-a6bc589ab831",
+  "hostedAccountChecksPassed": true,
+  "disposableAccountCleanupVerified": true,
+  "liveDnsChanged": true,
+  "oldInboundWebhookPreserved": false,
+  "inboundReceiverMoved": true,
+  "signedWebhookVerified": true,
+  "unsignedWebhookRejected": true,
+  "liveAdminVerified": true,
+  "testBannerRemoved": true,
+  "publicPuppies": 20,
+  "customDomainsHttpsVerified": true,
+  "domainSwitchVerifiedAt": "2026-10-05T23:20:53.164Z"
+}

@@ -1,4 +1,4 @@
-import * as tus from 'tus-js-client'
+import { storage, uploadStorageFile, storageSource } from './storage'
 import { supabase } from './supabase'
 import { isImageFile, prepareExplorerFile } from './explorerImages'
 
@@ -14,32 +14,12 @@ async function allRows(table, columns, signal) {
 }
 
 function publicSource(url) {
-  try {
-    const parsed = new URL(url)
-    if (parsed.origin !== new URL(import.meta.env.VITE_SUPABASE_URL).origin) return null
-    const marker = '/storage/v1/object/public/'
-    const index = parsed.pathname.indexOf(marker)
-    if (index < 0) return null
-    const [bucket, ...parts] = decodeURIComponent(parsed.pathname.slice(index + marker.length)).split('/')
-    return ['puppy-photos', 'dog-photos'].includes(bucket) && parts.length ? { bucket, path: parts.join('/') } : null
-  } catch { return null }
+  const source = storageSource(url)
+  return source && ['puppy-photos', 'dog-photos'].includes(source.bucket) ? source : null
 }
 
 async function uploadPng(bucket, path, file) {
-  if (file.size <= 6 * 1024 * 1024) {
-    const { error } = await supabase.storage.from(bucket).upload(path, file, { contentType: 'image/png' })
-    if (error) throw error
-    return
-  }
-  const { data: { session }, error } = await supabase.auth.getSession()
-  if (error || !session) throw new Error('Please sign in again before converting images.')
-  await new Promise((resolve, reject) => new tus.Upload(file, {
-    endpoint: `${import.meta.env.VITE_SUPABASE_URL.replace('.supabase.co', '.storage.supabase.co')}/storage/v1/upload/resumable`,
-    headers: { authorization: `Bearer ${session.access_token}` },
-    metadata: { bucketName: bucket, objectName: path, contentType: 'image/png' },
-    chunkSize: 6 * 1024 * 1024, retryDelays: [0, 3000, 5000, 10000], removeFingerprintOnSuccess: true,
-    onError: reject, onSuccess: resolve
-  }).start())
+  await uploadStorageFile(bucket, path, file, { contentType: 'image/png' })
 }
 
 export async function convertPhotosToPng(onProgress, signal) {
@@ -72,13 +52,13 @@ export async function convertPhotosToPng(onProgress, signal) {
     const label = source.files[0]?.name || source.path.split('/').pop()
     onProgress({ current: index + 1, completed: index, total: pending.length, name: label, percent: Math.round(index / pending.length * 100) })
     try {
-      const { data, error } = await supabase.storage.from(source.bucket).download(source.path)
+      const { data, error } = await storage.from(source.bucket).download(source.path)
       if (error) throw error
       const prepared = await prepareExplorerFile(new File([data], label, { type: source.files[0]?.content_type || data.type }))
       if (prepared.type !== 'image/png') throw new Error('Image could not be converted to PNG.')
       const newPath = `${crypto.randomUUID()}.png`
       await uploadPng(source.bucket, newPath, prepared)
-      const newUrl = source.bucket === 'admin-files' ? null : supabase.storage.from(source.bucket).getPublicUrl(newPath).data.publicUrl
+      const newUrl = source.bucket === 'admin-files' ? null : storage.from(source.bucket).getPublicUrl(newPath).data.publicUrl
       for (const file of source.files) {
         const name = file.name.replace(/\.[^.]+$/, '') + '.png'
         const { error: updateError } = await supabase.from('admin_files').update({ name, storage_path: newPath, content_type: 'image/png', size_bytes: prepared.size }).eq('id', file.id)
@@ -88,7 +68,7 @@ export async function convertPhotosToPng(onProgress, signal) {
         const { error: updateError } = await supabase.from(reference.table).update({ photo_url: newUrl }).eq('id', reference.id)
         if (updateError) throw updateError
       }
-      const { error: removeError } = await supabase.storage.from(source.bucket).remove([source.path])
+      const { error: removeError } = await storage.from(source.bucket).remove([source.path])
       if (removeError) throw removeError
       result.converted++
     } catch (error) {

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { sizedImageUrl, originalOnError, preloadImage } from '../lib/imageLoading'
+import { latestPuppyImage, availableLitterId } from '../lib/puppyDisplay'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
-const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
 const isVideo = photo => /\.(mp4|webm|mov)(?:\?|$)/i.test(photo.photo_url)
 
 function preloadGalleryNeighbors(gallery) {
@@ -15,15 +15,19 @@ function preloadGalleryNeighbors(gallery) {
 }
 
 async function callFunction(name, body) {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Sign in before requesting a puppy.')
   const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`
+      'Authorization': `Bearer ${session.access_token}`
     },
     body: JSON.stringify(body)
   })
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || data.error || 'Request failed.')
+  return data
 }
 
 function isMissingLitterIdColumnError(error) {
@@ -110,7 +114,7 @@ export default function Puppies() {
           ? supabase.from('waitlist').select('*').eq('is_active', true).eq('litter_id', assignedLitterId)
           : Promise.resolve({ data: [], error: null }),
         supabase.from('litters').select('id, name').order('created_at', { ascending: false }),
-        supabase.from('puppy_photos').select('puppy_id, photo_url, caption, sort_order, created_at').order('sort_order').order('created_at')
+        supabase.from('puppy_photos').select('id, puppy_id, photo_url, caption, sort_order, created_at').order('sort_order').order('created_at')
       ])
 
       if (puppiesRes.error) console.error('Supabase error:', puppiesRes.error)
@@ -131,7 +135,9 @@ export default function Puppies() {
       setLitters(litterList)
 
       const myActiveEntry = activeRows.find(row => row.email?.toLowerCase() === currentUserEmail)
-      const defaultLitterId = myActiveEntry?.litter_id || assignedLitterId || (userIsAdmin ? litterList[0]?.id : '')
+      const defaultLitterId = userIsAdmin
+        ? availableLitterId(litterList, puppiesRes.data || [])
+        : myActiveEntry?.litter_id || assignedLitterId || ''
       const selectedId = String(defaultLitterId || '')
       setSelectedLitterId(selectedId)
 
@@ -221,6 +227,7 @@ export default function Puppies() {
     // Email admins
     try {
       await callFunction('send-reservation-email', {
+        waitlistId: activePerson.id,
         clientName: activePerson.name,
         puppyName: selectedPuppy.name
       })
@@ -246,9 +253,11 @@ export default function Puppies() {
 
   function openGallery(puppy) {
     const extraPhotos = photosByPuppy[String(puppy.id)] || []
+    const heroUrl = latestPuppyImage(extraPhotos, puppy.photo_url)
     const photos = [
-      ...(puppy.photo_url ? [{ photo_url: puppy.photo_url, caption: null }] : []),
-      ...extraPhotos.filter(photo => photo.photo_url !== puppy.photo_url)
+      ...(heroUrl ? [extraPhotos.find(photo => photo.photo_url === heroUrl) || { photo_url: heroUrl, caption: null }] : []),
+      ...extraPhotos.filter(photo => photo.photo_url !== heroUrl),
+      ...(puppy.photo_url && puppy.photo_url !== heroUrl && !extraPhotos.some(photo => photo.photo_url === puppy.photo_url) ? [{ photo_url: puppy.photo_url, caption: null }] : [])
     ]
     setGallery({ puppy, photos, photoIndex: 0 })
   }
@@ -373,6 +382,7 @@ export default function Puppies() {
         gap: '1.25rem'
       }}>
         {filtered.map(puppy => {
+          const heroUrl = latestPuppyImage(photosByPuppy[String(puppy.id)], puppy.photo_url)
           const s = statusColors[puppy.status] || statusColors.sold
           const isSelected = selectedPuppy?.id === puppy.id
           const canSelectPuppy = isMyTurn && !confirmed && puppy.status === 'available' && (isAdmin || String(puppy.litter_id || '') === assignedLitterId)
@@ -399,8 +409,8 @@ export default function Puppies() {
                 transition: 'all 0.15s'
               }}
             >
-              {puppy.photo_url
-                ? <img src={sizedImageUrl(puppy.photo_url, 480)} onError={event => originalOnError(event, puppy.photo_url)} loading="lazy" decoding="async" alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
+              {heroUrl
+                ? <img src={sizedImageUrl(heroUrl, 480)} onError={event => originalOnError(event, heroUrl)} loading="lazy" decoding="async" alt={puppy.name} style={{ width: '100%', aspectRatio: '1', objectFit: 'cover' }} />
                 : <div style={{ width: '100%', aspectRatio: '1', background: '#f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#aaa' }}>No photo</div>
               }
 

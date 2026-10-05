@@ -32,7 +32,10 @@ export default function AdminCampaigns({ initialLitterId = null }) {
   const [customSenderEmail, setCustomSenderEmail] = useState('')
   const [replyTo, setReplyTo] = useState('')
   const [customRecipients, setCustomRecipients] = useState('')
-  const [count, setCount] = useState(0)
+  const [addressCount, setAddressCount] = useState({ audience: null, count: 0 })
+  const count = audience === 'custom'
+    ? new Set(customRecipients.split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(validEmail)).size
+    : addressCount.audience === audience ? addressCount.count : 0
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [templateName, setTemplateName] = useState('')
@@ -60,20 +63,15 @@ export default function AdminCampaigns({ initialLitterId = null }) {
   }, [])
   useEffect(() => {
     let active = true
-    setCount(0)
-    if (audience === 'custom') {
-      const addresses = customRecipients.split(/[\s,;]+/).map(email => email.trim().toLowerCase()).filter(validEmail)
-      setCount(new Set(addresses).size)
-      return
-    }
+    if (audience === 'custom') return
     Promise.all([
       audience === 'applicants' || audience === 'everyone' ? loadAddresses('applications') : Promise.resolve(new Set()),
       audience !== 'applicants' ? loadAddresses('waitlist', audience.startsWith('litter:') ? audience.slice(7) : null) : Promise.resolve(new Set())
     ]).then(([applicants, waitlist]) => {
-      if (active) setCount(new Set([...applicants, ...waitlist]).size)
+      if (active) setAddressCount({ audience, count: new Set([...applicants, ...waitlist]).size })
     }).catch(error => { if (active) setMessage(error.message) })
     return () => { active = false }
-  }, [audience, customRecipients])
+  }, [audience])
 
   async function saveTemplate() {
     if (!templateName.trim() || !subject.trim() || !body.trim()) { setMessage('Template name, subject, and message are required.'); return }
@@ -110,7 +108,7 @@ export default function AdminCampaigns({ initialLitterId = null }) {
       const response = await error.context.json().catch(() => null)
       detail = response?.error || response?.errors?.[0] || detail
     }
-    setMessage(detail || error?.message || `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`)
+    setMessage(detail || error?.message || (data?.preview ? `Created ${data.preview_count || 0} email previews. Nothing was sent. View them in Admin → Email.` : data?.queued ? `Queued ${data.queued} emails for background delivery. Delivered emails appear in the sent inbox.` : `Sent ${data?.sent || 0} of ${data?.total || count} emails.${data?.failed ? ` ${data.failed} failed.` : ''}`))
   }
   return <section style={{ maxWidth: 760 }}>
     <h3>Email campaigns</h3>

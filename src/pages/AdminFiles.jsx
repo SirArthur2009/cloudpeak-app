@@ -1,6 +1,6 @@
+import { storage, uploadStorageFile } from '../lib/storage'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
-import * as tus from 'tus-js-client'
 import { browserPreviewBlob, prepareExplorerFile } from '../lib/explorerImages'
 import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 import { convertPhotosToPng } from '../lib/convertPhotosToPng'
@@ -77,10 +77,10 @@ function FileGlyph({ folder = false, image = false }) {
 }
 
 async function loadPreviewUrl(file) {
-  const storage = supabase.storage.from(file.storage_bucket || 'admin-files')
+  const bucketStorage = storage.from(file.storage_bucket || 'admin-files')
   const transform = /\.(gif|svg|heic|heif)$/i.test(file.name) ? undefined : { transform: { width: 1600, quality: 85 } }
-  let { data, error } = await storage.download(file.storage_path, transform)
-  if (error && transform) ({ data, error } = await storage.download(file.storage_path))
+  let { data, error } = await bucketStorage.download(file.storage_path, transform)
+  if (error && transform) ({ data, error } = await bucketStorage.download(file.storage_path))
   if (error) throw error
   return URL.createObjectURL(await browserPreviewBlob(data, file))
 }
@@ -89,7 +89,7 @@ const thumbnailUrlCache = new Map()
 function signedThumbnailUrl(path) {
   const cached = thumbnailUrlCache.get(path)
   if (cached && cached.expires > Date.now()) return cached.promise
-  const promise = supabase.storage.from('admin-files').createSignedUrl(path, 3600, { transform: { width: 120, quality: 75 } })
+  const promise = storage.from('admin-files').createSignedUrl(path, 3600, { transform: { width: 120, quality: 75 } })
     .then(({ data, error }) => {
       if (error) throw error
       return data.signedUrl
@@ -104,7 +104,7 @@ function FileThumbnail({ file }) {
   const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === 'undefined')
   const [url, setUrl] = useState('')
   const publicUrl = file.storage_bucket && file.storage_bucket !== 'admin-files'
-    ? supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl : ''
+    ? storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl : ''
   useEffect(() => {
     if (nearViewport || !thumbnailRef.current || !('IntersectionObserver' in window)) return
     const observer = new IntersectionObserver(entries => {
@@ -123,7 +123,7 @@ function FileThumbnail({ file }) {
     if (publicUrl) { originalOnError(event, publicUrl); return }
     if (event.currentTarget.dataset.fallback) return
     event.currentTarget.dataset.fallback = 'true'
-    supabase.storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
+    storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
       if (data?.signedUrl && event.target?.isConnected) event.target.src = data.signedUrl
     })
   }
@@ -304,25 +304,16 @@ export default function AdminFiles({ onOpenCleanup }) {
         } catch (error) { failures.push(`${file.name}: ${error.message}`); completedBytes += file.size; continue }
         const path = crypto.randomUUID()
         let uploadError = null
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-        if (sessionError || !session) throw new Error('Please sign in again before uploading.')
         try {
-          await new Promise((resolve, reject) => {
-            new tus.Upload(prepared, {
-              endpoint: `${import.meta.env.VITE_SUPABASE_URL.replace('.supabase.co', '.storage.supabase.co')}/storage/v1/upload/resumable`,
-              headers: { authorization: `Bearer ${session.access_token}` },
-              metadata: { bucketName: 'admin-files', objectName: path, contentType: prepared.type || 'application/octet-stream' },
-              chunkSize: 6 * 1024 * 1024, retryDelays: [0, 3000, 5000, 10000], removeFingerprintOnSuccess: true,
-              onProgress: uploaded => updateProgress(prepared.size ? file.size * uploaded / prepared.size : file.size),
-              onError: reject, onSuccess: resolve
-            }).start()
+          await uploadStorageFile('admin-files', path, prepared, {
+            onProgress: uploaded => updateProgress(prepared.size ? file.size * uploaded / prepared.size : file.size),
           })
         } catch (error) { uploadError = error }
         completedBytes += file.size
         if (uploadError) { failures.push(`${file.name}: ${uploadError.message}`); continue }
         const { error: saveError } = await supabase.from('admin_files').insert({ folder_id: targetFolderId, name: prepared.name, storage_path: path, size_bytes: prepared.size, content_type: prepared.type || null })
         if (saveError) {
-          await supabase.storage.from('admin-files').remove([path])
+          await storage.from('admin-files').remove([path])
           failures.push(`${file.name}: ${saveError.message}`)
         }
       }
@@ -387,7 +378,7 @@ export default function AdminFiles({ onOpenCleanup }) {
   async function download(file) {
     setBusy(true); setMessage('')
     try {
-      const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+      const { data, error } = await storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
       if (error) throw error
       const url = URL.createObjectURL(data)
       const link = document.createElement('a')
@@ -471,12 +462,12 @@ export default function AdminFiles({ onOpenCleanup }) {
     run(async () => {
       const bucket = file.storage_bucket || 'admin-files'
       if (bucket !== 'admin-files') {
-        const url = supabase.storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
+        const url = storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
         const checks = await Promise.all(['puppy_photos', 'puppies', 'dogs'].map(table => supabase.from(table).select('id', { count: 'exact', head: true }).eq('photo_url', url)))
         if (checks.some(check => check.error)) throw checks.find(check => check.error).error
         if (checks.some(check => check.count > 0)) throw new Error('This image is used on the site. Remove those photo references before deleting it.')
       }
-      const { error } = await supabase.storage.from(bucket).remove([file.storage_path])
+      const { error } = await storage.from(bucket).remove([file.storage_path])
       if (error) throw error
       const result = await supabase.from('admin_files').delete().eq('id', file.id)
       if (result.error) throw result.error
@@ -492,7 +483,7 @@ export default function AdminFiles({ onOpenCleanup }) {
     await run(async () => {
       const publicFiles = contents.files.filter(file => (file.storage_bucket || 'admin-files') !== 'admin-files')
       for (const file of publicFiles) {
-        const url = supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
+        const url = storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
         const checks = await Promise.all(['puppy_photos', 'puppies', 'dogs'].map(table => supabase.from(table).select('id', { count: 'exact', head: true }).eq('photo_url', url)))
         if (checks.some(check => check.error)) throw checks.find(check => check.error).error
         if (checks.some(check => check.count > 0)) throw new Error(`“${file.name}” is used on the site. Remove its photo references before deleting this folder.`)
@@ -506,7 +497,7 @@ export default function AdminFiles({ onOpenCleanup }) {
       for (const [bucket, bucketFiles] of byBucket) {
         for (let index = 0; index < bucketFiles.length; index += 100) {
           const batch = bucketFiles.slice(index, index + 100)
-          const { error: storageError } = await supabase.storage.from(bucket).remove(batch.map(file => file.storage_path))
+          const { error: storageError } = await storage.from(bucket).remove(batch.map(file => file.storage_path))
           if (storageError) throw storageError
           const { error: rowsError } = await supabase.from('admin_files').delete().in('id', batch.map(file => file.id))
           if (rowsError) throw rowsError
@@ -546,7 +537,7 @@ export default function AdminFiles({ onOpenCleanup }) {
       for (let index = 0; index < downloads.length; index += 3) {
         const batch = downloads.slice(index, index + 3)
         const blobs = await Promise.all(batch.map(async ({ file }) => {
-          const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          const { data, error } = await storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
           if (error) throw error
           completed++
           setFolderProgress({ name: file.name, percent: Math.round(completed / Math.max(downloads.length, 1) * 80) })

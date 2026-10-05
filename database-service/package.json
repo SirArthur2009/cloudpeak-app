@@ -1,0 +1,7 @@
+{
+  "name": "cloudpeak-database-test",
+  "private": true,
+  "type": "module",
+  "scripts": {"start": "node server.js", "copy": "node copy.js", "verify": "node verify.js", "sync:auth": "node sync-auth.js", "test": "node --test backend.test.js"},
+  "dependencies": {"pg": "8.16.3", "jose": "6.1.3", "@supabase/supabase-js": "2.105.3"}
+}

@@ -1,0 +1,8 @@
+.env
+node_modules/
+bin/
+snapshot.json
+copy-report.json
+display-check.json
+*.log
+reconciliation/

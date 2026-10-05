@@ -1,0 +1,7 @@
+node_modules/
+.env
+migration-manifest.json
+migration-manifest.json.tmp
+url-backup.json
+*.log
+.migration-key.pem

@@ -1,0 +1,1273 @@
+{
+  "columns": [
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "admin_files",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "folder_id",
+      "type": "uuid",
+      "table": "admin_files",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "admin_files",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "storage_path",
+      "type": "text",
+      "table": "admin_files",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "size_bytes",
+      "type": "bigint",
+      "table": "admin_files",
+      "default": "0",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "content_type",
+      "type": "text",
+      "table": "admin_files",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "admin_files",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "storage_bucket",
+      "type": "text",
+      "table": "admin_files",
+      "default": "'admin-files'::text",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "admin_folders",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "parent_id",
+      "type": "uuid",
+      "table": "admin_folders",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "admin_folders",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "admin_folders",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": true,
+      "identity": "d"
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "analytics_events",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "event_name",
+      "type": "text",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "page_path",
+      "type": "text",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "page_title",
+      "type": "text",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "referrer",
+      "type": "text",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "session_id",
+      "type": "text",
+      "table": "analytics_events",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "properties",
+      "type": "jsonb",
+      "table": "analytics_events",
+      "default": "'{}'::jsonb",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "applications",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "first_name",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "last_name",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "address_line1",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "address_line2",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "city",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "state",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "zip",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "country",
+      "type": "text",
+      "table": "applications",
+      "default": "'United States'::text",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "phone",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "email",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "gender_preference",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "color_preference",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "registration_type",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "has_fence",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "indoor_outdoor",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "vet_info",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "home_situation",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "how_found",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "training_goals",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "purchase_agreement_questions",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "other_questions",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "agreed_to_terms",
+      "type": "boolean",
+      "table": "applications",
+      "default": "false",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "status",
+      "type": "text",
+      "table": "applications",
+      "default": "'new'::text",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "applications",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "applications",
+      "default": "now()",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "dogs",
+      "default": null,
+      "notnull": true,
+      "identity": "d"
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "registration_number",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "pedigree_url",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "photo_url",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "embark_url",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "ofa_url",
+      "type": "text",
+      "table": "dogs",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "email_templates",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "email_templates",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "subject",
+      "type": "text",
+      "table": "email_templates",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "body",
+      "type": "text",
+      "table": "email_templates",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "email_templates",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "updated_at",
+      "type": "timestamp with time zone",
+      "table": "email_templates",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "emails",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "thread_id",
+      "type": "uuid",
+      "table": "emails",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "direction",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "resend_id",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "from_email",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "to_email",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "subject",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "text_body",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "html_body",
+      "type": "text",
+      "table": "emails",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "is_read",
+      "type": "boolean",
+      "table": "emails",
+      "default": "false",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "emails",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "is_archived",
+      "type": "boolean",
+      "table": "emails",
+      "default": "false",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "guest_payments",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "waitlist_id",
+      "type": "bigint",
+      "table": "guest_payments",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "payment_type",
+      "type": "text",
+      "table": "guest_payments",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "amount",
+      "type": "numeric(10,2)",
+      "table": "guest_payments",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "paid_at",
+      "type": "date",
+      "table": "guest_payments",
+      "default": "CURRENT_DATE",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "note",
+      "type": "text",
+      "table": "guest_payments",
+      "default": "''::text",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "recorded_by",
+      "type": "uuid",
+      "table": "guest_payments",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "guest_payments",
+      "default": "now()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "litters",
+      "default": null,
+      "notnull": true,
+      "identity": "d"
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "litters",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "birth_date",
+      "type": "date",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "mother_id",
+      "type": "bigint",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "father_id",
+      "type": "bigint",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "litters",
+      "default": "now()",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "sire",
+      "type": "text",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "dam",
+      "type": "text",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "born_date",
+      "type": "date",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "expected_date",
+      "type": "date",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "go_home_date",
+      "type": "date",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "colors",
+      "type": "text",
+      "table": "litters",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "status",
+      "type": "text",
+      "table": "litters",
+      "default": "'upcoming'::text",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "newsletter_signups",
+      "default": "gen_random_uuid()",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "email",
+      "type": "text",
+      "table": "newsletter_signups",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "newsletter_signups",
+      "default": "now()",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "uuid",
+      "table": "profiles",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "role",
+      "type": "text",
+      "table": "profiles",
+      "default": "'client'::text",
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "puppies",
+      "default": null,
+      "notnull": true,
+      "identity": "d"
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "gender",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "color",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "litter_id",
+      "type": "bigint",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "status",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "photo_url",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "puppies",
+      "default": "now()",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "collar_color",
+      "type": "text",
+      "table": "puppies",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "puppy_photos",
+      "default": null,
+      "notnull": true,
+      "identity": "a"
+    },
+    {
+      "name": "puppy_id",
+      "type": "bigint",
+      "table": "puppy_photos",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "photo_url",
+      "type": "text",
+      "table": "puppy_photos",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "caption",
+      "type": "text",
+      "table": "puppy_photos",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "sort_order",
+      "type": "integer",
+      "table": "puppy_photos",
+      "default": "0",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "created_at",
+      "type": "timestamp with time zone",
+      "table": "puppy_photos",
+      "default": "now()",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "id",
+      "type": "bigint",
+      "table": "waitlist",
+      "default": null,
+      "notnull": true,
+      "identity": "d"
+    },
+    {
+      "name": "name",
+      "type": "text",
+      "table": "waitlist",
+      "default": null,
+      "notnull": true,
+      "identity": ""
+    },
+    {
+      "name": "email",
+      "type": "text",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "phone",
+      "type": "text",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "position",
+      "type": "bigint",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "is_active",
+      "type": "boolean",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "selected_puppy_id",
+      "type": "bigint",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "notes",
+      "type": "text",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "pending_approval",
+      "type": "boolean",
+      "table": "waitlist",
+      "default": "false",
+      "notnull": false,
+      "identity": ""
+    },
+    {
+      "name": "litter_id",
+      "type": "bigint",
+      "table": "waitlist",
+      "default": null,
+      "notnull": false,
+      "identity": ""
+    }
+  ],
+  "indexes": [
+    "CREATE INDEX emails_thread_id_idx ON public.emails USING btree (thread_id)",
+    "CREATE INDEX emails_created_at_idx ON public.emails USING btree (created_at DESC)",
+    "CREATE INDEX emails_is_archived_idx ON public.emails USING btree (is_archived)",
+    "CREATE INDEX analytics_events_created_at_idx ON public.analytics_events USING btree (created_at DESC)",
+    "CREATE INDEX analytics_events_event_name_idx ON public.analytics_events USING btree (event_name)",
+    "CREATE INDEX analytics_events_session_id_idx ON public.analytics_events USING btree (session_id)",
+    "CREATE INDEX analytics_events_properties_gin_idx ON public.analytics_events USING gin (properties)",
+    "CREATE INDEX idx_waitlist_litter_id ON public.waitlist USING btree (litter_id)",
+    "CREATE INDEX idx_waitlist_litter_position ON public.waitlist USING btree (litter_id, \"position\")",
+    "CREATE UNIQUE INDEX admin_folders_root_name_key ON public.admin_folders USING btree (name) WHERE (parent_id IS NULL)",
+    "CREATE INDEX admin_folders_parent_idx ON public.admin_folders USING btree (parent_id)",
+    "CREATE INDEX admin_files_folder_idx ON public.admin_files USING btree (folder_id)",
+    "CREATE INDEX guest_payments_waitlist_id_idx ON public.guest_payments USING btree (waitlist_id)"
+  ],
+  "triggers": [
+    {
+      "table": "applications",
+      "definition": "CREATE TRIGGER review_waitlisted_application_before_write BEFORE INSERT OR UPDATE OF email, status ON public.applications FOR EACH ROW EXECUTE FUNCTION review_waitlisted_application()"
+    },
+    {
+      "table": "waitlist",
+      "definition": "CREATE TRIGGER review_applications_after_waitlist_write AFTER INSERT OR UPDATE OF email ON public.waitlist FOR EACH ROW EXECUTE FUNCTION review_applications_when_waitlisted()"
+    }
+  ],
+  "functions": [
+    {
+      "name": "handle_new_user",
+      "definition": "CREATE OR REPLACE FUNCTION public.handle_new_user()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\nAS $function$\r\nBEGIN\r\n  INSERT INTO public.profiles (id, role)\r\n  VALUES (new.id, 'client');\r\n  RETURN new;\r\nEND;\r\n$function$\n"
+    },
+    {
+      "name": "review_waitlisted_application",
+      "definition": "CREATE OR REPLACE FUNCTION public.review_waitlisted_application()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nbegin\n  if new.status is null or lower(new.status) = 'new' then\n    if exists (select 1 from public.waitlist w where lower(trim(w.email)) = lower(trim(new.email))) then\n      new.status := 'reviewed';\n    end if;\n  end if;\n  return new;\nend $function$\n"
+    },
+    {
+      "name": "review_applications_when_waitlisted",
+      "definition": "CREATE OR REPLACE FUNCTION public.review_applications_when_waitlisted()\n RETURNS trigger\n LANGUAGE plpgsql\n SECURITY DEFINER\n SET search_path TO ''\nAS $function$\nbegin\n  update public.applications a set status = 'reviewed'\n  where lower(trim(a.email)) = lower(trim(new.email))\n    and (a.status is null or lower(a.status) = 'new');\n  return new;\nend $function$\n"
+    }
+  ],
+  "constraints": [
+    {
+      "name": "profiles_id_fkey",
+      "type": "f",
+      "table": "profiles",
+      "definition": "FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "profiles_pkey",
+      "type": "p",
+      "table": "profiles",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "puppy_photos_pkey",
+      "type": "p",
+      "table": "puppy_photos",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "puppy_photos_puppy_id_fkey",
+      "type": "f",
+      "table": "puppy_photos",
+      "definition": "FOREIGN KEY (puppy_id) REFERENCES puppies(id) ON DELETE CASCADE"
+    },
+    {
+      "name": "applications_pkey",
+      "type": "p",
+      "table": "applications",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "applications_status_check",
+      "type": "c",
+      "table": "applications",
+      "definition": "CHECK ((status = ANY (ARRAY['new'::text, 'reviewed'::text, 'approved'::text, 'declined'::text])))"
+    },
+    {
+      "name": "litters_father_id_fkey",
+      "type": "f",
+      "table": "litters",
+      "definition": "FOREIGN KEY (father_id) REFERENCES dogs(id)"
+    },
+    {
+      "name": "litters_mother_id_fkey",
+      "type": "f",
+      "table": "litters",
+      "definition": "FOREIGN KEY (mother_id) REFERENCES dogs(id)"
+    },
+    {
+      "name": "litters_pkey",
+      "type": "p",
+      "table": "litters",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "dogs_pkey",
+      "type": "p",
+      "table": "dogs",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "newsletter_signups_email_key",
+      "type": "u",
+      "table": "newsletter_signups",
+      "definition": "UNIQUE (email)"
+    },
+    {
+      "name": "newsletter_signups_pkey",
+      "type": "p",
+      "table": "newsletter_signups",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "puppies_litter_id_fkey",
+      "type": "f",
+      "table": "puppies",
+      "definition": "FOREIGN KEY (litter_id) REFERENCES litters(id)"
+    },
+    {
+      "name": "puppies_pkey",
+      "type": "p",
+      "table": "puppies",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "emails_direction_check",
+      "type": "c",
+      "table": "emails",
+      "definition": "CHECK ((direction = ANY (ARRAY['inbound'::text, 'outbound'::text])))"
+    },
+    {
+      "name": "emails_pkey",
+      "type": "p",
+      "table": "emails",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "analytics_events_pkey",
+      "type": "p",
+      "table": "analytics_events",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "waitlist_litter_id_fkey",
+      "type": "f",
+      "table": "waitlist",
+      "definition": "FOREIGN KEY (litter_id) REFERENCES litters(id) ON UPDATE CASCADE ON DELETE SET NULL"
+    },
+    {
+      "name": "waitlist_pkey",
+      "type": "p",
+      "table": "waitlist",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "waitlist_selected_puppy_id_fkey",
+      "type": "f",
+      "table": "waitlist",
+      "definition": "FOREIGN KEY (selected_puppy_id) REFERENCES puppies(id) ON DELETE SET NULL"
+    },
+    {
+      "name": "admin_folders_name_check",
+      "type": "c",
+      "table": "admin_folders",
+      "definition": "CHECK (((length(TRIM(BOTH FROM name)) >= 1) AND (length(TRIM(BOTH FROM name)) <= 150)))"
+    },
+    {
+      "name": "admin_folders_parent_id_fkey",
+      "type": "f",
+      "table": "admin_folders",
+      "definition": "FOREIGN KEY (parent_id) REFERENCES admin_folders(id) ON DELETE RESTRICT"
+    },
+    {
+      "name": "admin_folders_parent_id_name_key",
+      "type": "u",
+      "table": "admin_folders",
+      "definition": "UNIQUE (parent_id, name)"
+    },
+    {
+      "name": "admin_folders_pkey",
+      "type": "p",
+      "table": "admin_folders",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "email_templates_body_check",
+      "type": "c",
+      "table": "email_templates",
+      "definition": "CHECK (((length(TRIM(BOTH FROM body)) >= 1) AND (length(TRIM(BOTH FROM body)) <= 20000)))"
+    },
+    {
+      "name": "email_templates_name_check",
+      "type": "c",
+      "table": "email_templates",
+      "definition": "CHECK (((length(TRIM(BOTH FROM name)) >= 1) AND (length(TRIM(BOTH FROM name)) <= 150)))"
+    },
+    {
+      "name": "email_templates_pkey",
+      "type": "p",
+      "table": "email_templates",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "email_templates_subject_check",
+      "type": "c",
+      "table": "email_templates",
+      "definition": "CHECK (((length(TRIM(BOTH FROM subject)) >= 1) AND (length(TRIM(BOTH FROM subject)) <= 300)))"
+    },
+    {
+      "name": "admin_files_folder_id_fkey",
+      "type": "f",
+      "table": "admin_files",
+      "definition": "FOREIGN KEY (folder_id) REFERENCES admin_folders(id) ON DELETE RESTRICT"
+    },
+    {
+      "name": "admin_files_name_check",
+      "type": "c",
+      "table": "admin_files",
+      "definition": "CHECK (((length(TRIM(BOTH FROM name)) >= 1) AND (length(TRIM(BOTH FROM name)) <= 255)))"
+    },
+    {
+      "name": "admin_files_pkey",
+      "type": "p",
+      "table": "admin_files",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "admin_files_size_bytes_check",
+      "type": "c",
+      "table": "admin_files",
+      "definition": "CHECK ((size_bytes >= 0))"
+    },
+    {
+      "name": "admin_files_storage_path_key",
+      "type": "u",
+      "table": "admin_files",
+      "definition": "UNIQUE (storage_path)"
+    },
+    {
+      "name": "guest_payments_amount_check",
+      "type": "c",
+      "table": "guest_payments",
+      "definition": "CHECK ((amount > (0)::numeric))"
+    },
+    {
+      "name": "guest_payments_payment_type_check",
+      "type": "c",
+      "table": "guest_payments",
+      "definition": "CHECK ((payment_type = ANY (ARRAY['pre_litter_deposit'::text, 'post_litter_deposit'::text, 'born_litter_deposit'::text, 'final_payment'::text, 'full_payment'::text, 'other'::text])))"
+    },
+    {
+      "name": "guest_payments_pkey",
+      "type": "p",
+      "table": "guest_payments",
+      "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "guest_payments_recorded_by_fkey",
+      "type": "f",
+      "table": "guest_payments",
+      "definition": "FOREIGN KEY (recorded_by) REFERENCES auth.users(id)"
+    },
+    {
+      "name": "guest_payments_waitlist_id_fkey",
+      "type": "f",
+      "table": "guest_payments",
+      "definition": "FOREIGN KEY (waitlist_id) REFERENCES waitlist(id) ON DELETE CASCADE"
+    }
+  ]
+}

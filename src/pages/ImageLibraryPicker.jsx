@@ -1,3 +1,4 @@
+import { storage } from '../lib/storage'
 import { useEffect, useRef, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { browserPreviewBlob, isHeicFile } from '../lib/explorerImages'
@@ -25,15 +26,15 @@ function PickerThumbnail({ file }) {
       try {
         const bucket = file.storage_bucket || 'admin-files'
         if (isHeicFile(file)) {
-          const { data, error } = await supabase.storage.from(bucket).download(file.storage_path)
+          const { data, error } = await storage.from(bucket).download(file.storage_path)
           if (error) throw error
           objectUrl = URL.createObjectURL(await browserPreviewBlob(data, file))
           if (active) setPreview({ url: objectUrl, error: '' })
         } else if (bucket !== 'admin-files') {
-          const url = supabase.storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
+          const url = storage.from(bucket).getPublicUrl(file.storage_path).data.publicUrl
           if (active) setPreview({ url, error: '' })
         } else {
-          const { data, error } = await supabase.storage.from(bucket).createSignedUrl(file.storage_path, 3600, { transform: { width: 320, quality: 75 } })
+          const { data, error } = await storage.from(bucket).createSignedUrl(file.storage_path, 3600, { transform: { width: 320, quality: 75 } })
           if (error) throw error
           if (active) setPreview({ url: data.signedUrl, error: '' })
         }
@@ -47,7 +48,7 @@ function PickerThumbnail({ file }) {
       if (file.storage_bucket && file.storage_bucket !== 'admin-files') { originalOnError(event, preview.url); return }
       if (event.currentTarget.dataset.fallback) { setPreview({ url: '', error: 'Preview unavailable' }); return }
       event.currentTarget.dataset.fallback = 'true'
-      supabase.storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
+      storage.from('admin-files').createSignedUrl(file.storage_path, 3600).then(({ data }) => {
         if (data?.signedUrl && event.target?.isConnected) event.target.src = data.signedUrl
       })
     }} /> : <span className="image-library-placeholder" title={preview.error}><span aria-hidden="true">▧</span><small>{preview.error || (visible ? 'Loading photo…' : 'Photo')}</small></span>}

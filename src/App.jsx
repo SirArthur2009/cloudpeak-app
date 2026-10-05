@@ -110,6 +110,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      {import.meta.env.VITE_DATA_API_URL && import.meta.env.VITE_RELEASE_MODE !== 'live' && <div role="status" style={{ padding: '0.6rem 1rem', background: '#fff3cd', color: '#664d03', textAlign: 'center' }}>{import.meta.env.VITE_RELEASE_MODE === 'staging' ? 'Railway verification · Supabase login · Test email and account only' : 'Railway database test · Supabase login · Email previews only · Account changes blocked'}</div>}
       <nav style={{
         padding: '0 2rem',
         borderBottom: '1px solid #e0e0e0',

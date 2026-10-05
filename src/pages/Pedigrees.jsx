@@ -1,3 +1,4 @@
+import { storage } from '../lib/storage'
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
@@ -22,7 +23,7 @@ function getDogPhotoUrl(photoUrl) {
     .replace(/^dog-photos\//, '')
     .replace(/^storage\/v1\/object\/public\/dog-photos\//, '')
 
-  const { data } = supabase.storage.from('dog-photos').getPublicUrl(normalizedPath)
+  const { data } = storage.from('dog-photos').getPublicUrl(normalizedPath)
   return data?.publicUrl || ''
 }
 

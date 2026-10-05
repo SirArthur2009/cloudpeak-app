@@ -1,0 +1,31 @@
+{
+  "projectId": "ba2498be-e030-473a-81b4-a14d05dd8120",
+  "environmentId": "bd380cbe-c04c-4174-a8b7-5e126c99dc06",
+  "serviceId": "11612220-77f2-4c35-85c9-dd99d1b0cb1b",
+  "deploymentId": "eb671aa5-80c3-4a4a-967d-a7996ff6ed3f",
+  "appUrl": "https://cloudpeak-hosted-test-production.up.railway.app",
+  "websiteUrl": "https://cloudpeak-hosted-test-production-0e41.up.railway.app",
+  "emailMode": "live",
+  "authWrites": true,
+  "releaseMode": "live",
+  "actionsRestricted": false,
+  "database": "Railway database with reconciled source business records",
+  "productionCutover": true,
+  "verified": {
+    "linuxBuildAndHealth": true,
+    "adminLogin": true,
+    "publicGalleryImages": 11,
+    "privateAccessDenial": true,
+    "hostedEmailPreview": true,
+    "hostedEmailDelivery": "delivered",
+    "hostedDisposableAccountChecks": true,
+    "uploadedBytesMatchSha256": true,
+    "privateImagePreview": true,
+    "disposableUploadsCleaned": true
+  },
+  "cutoverStatus": "Live custom domains verified over HTTPS; actual inbound delivery and post-cutover user checks pending",
+  "activatedAt": "2026-10-05T23:16:09.460Z",
+  "liveDnsChanged": true,
+  "customDomainsHttpsVerified": true,
+  "domainSwitchVerifiedAt": "2026-10-05T23:20:53.162Z"
+}

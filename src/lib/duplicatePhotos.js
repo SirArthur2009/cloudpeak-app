@@ -1,3 +1,4 @@
+import { storage, storageSource } from './storage'
 import { supabase } from './supabase'
 import { isImageFile, prepareExplorerFile, publishExplorerImage } from './explorerImages'
 
@@ -5,13 +6,8 @@ const imageName = name => name.split('/').pop().replace(/\.[^.]+$/, '').trim().t
 const isImage = file => isImageFile({ name: file.name, type: file.content_type })
 
 export function puppyStoragePath(url) {
-  try {
-    const marker = '/storage/v1/object/public/puppy-photos/'
-    const parsed = new URL(url)
-    if (parsed.origin !== new URL(import.meta.env.VITE_SUPABASE_URL).origin) return null
-    const index = parsed.pathname.indexOf(marker)
-    return index < 0 ? null : decodeURIComponent(parsed.pathname.slice(index + marker.length))
-  } catch { return null }
+  const source = storageSource(url)
+  return source?.bucket === 'puppy-photos' ? source.path : null
 }
 
 async function allRows(table, columns, signal) {
@@ -69,7 +65,7 @@ export async function scanPuppyPhotoDuplicates(onProgress, signal) {
     ...gallery.filter(row => row.photo_url).map(row => ({ kind: 'gallery', id: row.id, url: row.photo_url, label: puppyNames.get(row.puppy_id) || 'Puppy gallery' })),
     ...puppies.filter(row => row.photo_url).map(row => ({ kind: 'cover', id: row.id, url: row.photo_url, label: `${row.name} cover` }))
   ].filter(row => puppyStoragePath(row.url))
-  const alreadyLinked = new Set(images.filter(file => file.storage_bucket && file.storage_bucket !== 'admin-files').map(file => supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl))
+  const alreadyLinked = new Set(images.filter(file => file.storage_bucket && file.storage_bucket !== 'admin-files').map(file => storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl))
   const imageSignatures = []
   const uniqueUrls = [...new Set(references.map(row => row.url).filter(url => !alreadyLinked.has(url)))]
   const total = images.length + uniqueUrls.length + references.length + 1
@@ -78,7 +74,7 @@ export async function scanPuppyPhotoDuplicates(onProgress, signal) {
   for (const [index, file] of images.entries()) {
     signal?.throwIfAborted()
     onProgress({ completed, total, label: `Checking explorer image ${index + 1} of ${images.length}` })
-    const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path, {}, { signal })
+    const { data, error } = await storage.from(file.storage_bucket || 'admin-files').download(file.storage_path, {}, { signal })
     signal?.throwIfAborted()
     if (!error) imageSignatures.push({ file, signature: await signature(data, file.name) })
     onProgress({ completed: ++completed, total, label: `Checked explorer image ${index + 1} of ${images.length}` })
@@ -87,7 +83,7 @@ export async function scanPuppyPhotoDuplicates(onProgress, signal) {
   for (const [index, url] of uniqueUrls.entries()) {
     signal?.throwIfAborted()
     onProgress({ completed, total, label: `Checking puppy photo ${index + 1} of ${uniqueUrls.length}` })
-    const { data, error } = await supabase.storage.from('puppy-photos').download(puppyStoragePath(url), {}, { signal })
+    const { data, error } = await storage.from('puppy-photos').download(puppyStoragePath(url), {}, { signal })
     signal?.throwIfAborted()
     if (!error) sourceSignatures.set(url, await signature(data, url))
     onProgress({ completed: ++completed, total, label: `Checked puppy photo ${index + 1} of ${uniqueUrls.length}` })
@@ -113,10 +109,10 @@ export async function scanPuppyPhotoDuplicates(onProgress, signal) {
   for (let index = 0; index < privateFiles.length; index += 100) {
     signal?.throwIfAborted()
     const batch = privateFiles.slice(index, index + 100)
-    const { data, error } = await supabase.storage.from('admin-files').createSignedUrls(batch.map(file => file.storage_path), 600)
+    const { data, error } = await storage.from('admin-files').createSignedUrls(batch.map(file => file.storage_path), 600)
     if (!error) batch.forEach((file, offset) => previewUrls.set(file.id, data[offset]?.signedUrl))
   }
-  for (const file of images.filter(item => item.storage_bucket && item.storage_bucket !== 'admin-files')) previewUrls.set(file.id, supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl)
+  for (const file of images.filter(item => item.storage_bucket && item.storage_bucket !== 'admin-files')) previewUrls.set(file.id, storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl)
   onProgress({ completed: total, total, label: 'Scan complete' })
   return matches.map(row => ({ ...row, candidates: row.candidates.map(candidate => ({ ...candidate, previewUrl: previewUrls.get(candidate.file.id) })) }))
 }
@@ -130,6 +126,6 @@ export async function linkPuppyPhotoToExplorer(match, file) {
   if (url === match.url || !oldPath) return { removed: false }
   const checks = await Promise.all(['puppy_photos', 'puppies', 'dogs'].map(name => supabase.from(name).select('id', { count: 'exact', head: true }).eq('photo_url', match.url)))
   if (checks.some(check => check.error) || checks.some(check => check.count > 0)) return { removed: false }
-  const removed = await supabase.storage.from('puppy-photos').remove([oldPath])
+  const removed = await storage.from('puppy-photos').remove([oldPath])
   return { removed: !removed.error }
 }

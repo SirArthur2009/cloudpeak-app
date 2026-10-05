@@ -1,5 +1,5 @@
+import { storage, uploadStorageFile } from './storage'
 import { supabase } from './supabase'
-import * as tus from 'tus-js-client'
 
 const IMAGE_EXTENSION = /\.(jpe?g|png|heic|heif|webp|gif|avif|bmp|tiff?|svg)$/i
 
@@ -55,31 +55,18 @@ export async function publishExplorerImage(file, bucket) {
   file = current
   if (!isImageFile({ name: file.name, type: file.content_type })) throw new Error('Choose an image file.')
   if (file.storage_bucket && file.storage_bucket !== 'admin-files') {
-    return supabase.storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
+    return storage.from(file.storage_bucket).getPublicUrl(file.storage_path).data.publicUrl
   }
-  const { data, error } = await supabase.storage.from('admin-files').download(file.storage_path)
+  const { data, error } = await storage.from('admin-files').download(file.storage_path)
   if (error) throw error
   const prepared = await prepareExplorerFile(new File([data], file.name, { type: file.content_type || data.type }))
   const path = `${crypto.randomUUID()}.png`
-  if (prepared.size > 6 * 1024 * 1024) {
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-    if (sessionError || !session) throw new Error('Please sign in again before adding this image.')
-    await new Promise((resolve, reject) => new tus.Upload(prepared, {
-      endpoint: `${import.meta.env.VITE_SUPABASE_URL.replace('.supabase.co', '.storage.supabase.co')}/storage/v1/upload/resumable`,
-      headers: { authorization: `Bearer ${session.access_token}` },
-      metadata: { bucketName: bucket, objectName: path, contentType: prepared.type },
-      chunkSize: 6 * 1024 * 1024, retryDelays: [0, 3000, 5000, 10000], removeFingerprintOnSuccess: true,
-      onError: reject, onSuccess: resolve
-    }).start())
-  } else {
-    const result = await supabase.storage.from(bucket).upload(path, prepared, { contentType: prepared.type })
-    if (result.error) throw result.error
-  }
+  await uploadStorageFile(bucket, path, prepared)
   const { error: updateError } = await supabase.from('admin_files').update({ storage_bucket: bucket, storage_path: path, name: prepared.name, content_type: prepared.type, size_bytes: prepared.size }).eq('id', file.id)
   if (updateError) {
-    await supabase.storage.from(bucket).remove([path])
+    await storage.from(bucket).remove([path])
     throw updateError
   }
-  await supabase.storage.from('admin-files').remove([file.storage_path])
-  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl
+  await storage.from('admin-files').remove([file.storage_path])
+  return storage.from(bucket).getPublicUrl(path).data.publicUrl
 }

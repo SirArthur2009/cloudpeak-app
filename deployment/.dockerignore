@@ -1,0 +1,7 @@
+**/.env
+**/.env.*
+**/node_modules
+**/.git
+**/*.log
+**/snapshot*.json
+**/*report*.json

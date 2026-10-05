@@ -3,18 +3,21 @@ import { supabase } from '../lib/supabase'
 import { sizedImageUrl, originalOnError } from '../lib/imageLoading'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
-const SERVICE_KEY = import.meta.env.VITE_SUPABASE_SERVICE_KEY
 
 async function callFunction(name, body) {
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) throw new Error('Sign in before requesting a puppy.')
   const res = await fetch(`${FUNCTIONS_URL}/${name}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SERVICE_KEY}`
+      'Authorization': `Bearer ${session.access_token}`
     },
     body: JSON.stringify(body)
   })
-  return res.json()
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.message || data.error || 'Request failed.')
+  return data
 }
 
 export default function Waitlist() {
@@ -156,8 +159,6 @@ export default function Waitlist() {
   }
 
   async function handleConfirmSelection() {
-    console.log('SERVICE_KEY exists:', !!SERVICE_KEY)
-    console.log('FUNCTIONS_URL:', FUNCTIONS_URL)
     if (!selectedPuppy || !activePerson) return
     setSaving(true)
     setError('')
@@ -179,6 +180,7 @@ export default function Waitlist() {
 
     try {
       await callFunction('send-reservation-email', {
+        waitlistId: activePerson.id,
         clientName: activePerson.name,
         puppyName: selectedPuppy.name
       })

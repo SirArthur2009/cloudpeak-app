@@ -1,0 +1,6 @@
+{
+  "id": "55963d53-5aad-4e5a-8445-0618a05344d5",
+  "endpoint": "https://cloudpeak-hosted-test-production.up.railway.app/railway-api/functions/v1/receive-inbound-email",
+  "status": "disabled",
+  "existingSourceWebhookPreserved": true
+}

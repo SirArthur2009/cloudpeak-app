@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Cloudpeak storage test</title>
+<style>body{font:16px system-ui;background:#f5f7fa;color:#18303d;margin:0;padding:40px 20px}main{max-width:720px;margin:auto;background:white;padding:30px;border-radius:12px}h1{margin-top:0}button,input{font:inherit;margin:12px 10px 12px 0}button{border:0;background:#183e52;color:white;padding:12px 18px;border-radius:6px;cursor:pointer}button:disabled{opacity:.5;cursor:default}pre{white-space:pre-wrap;background:#eef3f7;padding:16px;border-radius:6px}a{color:#1a648c}</style></head>
+<body><main><h1>Test Railway file storage</h1><p>Sign in below with your Cloudpeak admin account, then select a small test file. This test creates no database records. It uploads a private test object, downloads it, and checks that the bytes match.</p>
+<p id="session" role="status">Checking sign-in…</p>
+<form id="login"><input id="email" type="email" placeholder="Admin email" aria-label="Admin email" autocomplete="username" required><input id="password" type="password" placeholder="Password" aria-label="Password" autocomplete="current-password" required><button id="signin" type="submit">Sign in</button></form>
+<p id="configuration">Checking local configuration…</p><input id="file" type="file" aria-label="Test file"><br>
+<button id="run">Upload and verify</button><button id="cleanup" disabled>Delete test file</button><pre id="output" aria-live="polite">Ready.</pre>
+<script type="module" src="/scripts/storage-smoke.js"></script></main></body></html>

@@ -1,0 +1,7 @@
+{
+  "id": "c1ffabd1-536b-4de2-a5a8-00c6e7b94d63",
+  "previousEndpoint": "https://bvnurkvvhlmdapvhvcje.supabase.co/functions/v1/receive-inbound-email",
+  "endpoint": "https://cloudpeak-hosted-test-production.up.railway.app/railway-api/functions/v1/receive-inbound-email",
+  "enabled": true,
+  "signingSecretUnchanged": true
+}

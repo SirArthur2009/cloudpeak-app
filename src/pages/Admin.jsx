@@ -1,6 +1,6 @@
+import { storage, uploadStorageFile } from '../lib/storage'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import DOMPurify from 'dompurify'
-import * as tus from 'tus-js-client'
 import { supabase } from '../lib/supabase'
 import { useAuth } from '../lib/useAuth'
 import AdminFiles from './AdminFiles'
@@ -13,10 +13,11 @@ import { signature } from '../lib/duplicatePhotos'
 import { estimatedTimeRemaining } from '../lib/progressEta'
 import { renderCampaignMarkdown } from '../../supabase/functions/_shared/campaignMarkdown'
 import EmailEditor from './EmailEditor'
+import RailwayEmailPreviews from './RailwayEmailPreviews'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
-const PORTAL_URL = import.meta.env.VITE_PORTAL_URL
+const PORTAL_URL = import.meta.env.VITE_DATA_API_URL ? `${window.location.origin}/` : import.meta.env.VITE_PORTAL_URL
 
 const inputStyle = {
   padding: '0.6rem', border: '1px solid #ddd',
@@ -73,27 +74,8 @@ async function uploadFile(bucket, file) {
   file = await browserReadablePhoto(file)
   const ext = file.name.split('.').pop()
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
-  if (file.size > 6 * 1024 * 1024) {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) throw new Error('Please sign in again before uploading.')
-    await new Promise((resolve, reject) => {
-      const upload = new tus.Upload(file, {
-        endpoint: `${SUPABASE_URL.replace('.supabase.co', '.storage.supabase.co')}/storage/v1/upload/resumable`,
-        headers: { authorization: `Bearer ${session.access_token}` },
-        metadata: { bucketName: bucket, objectName: path, contentType: file.type },
-        chunkSize: 6 * 1024 * 1024,
-        retryDelays: [0, 3000, 5000, 10000],
-        removeFingerprintOnSuccess: true,
-        onError: reject,
-        onSuccess: resolve
-      })
-      upload.start()
-    })
-  } else {
-    const { error } = await supabase.storage.from(bucket).upload(path, file, { contentType: file.type })
-    if (error) throw error
-  }
-  const { data } = supabase.storage.from(bucket).getPublicUrl(path)
+  await uploadStorageFile(bucket, path, file)
+  const { data } = storage.from(bucket).getPublicUrl(path)
   return data.publicUrl
 }
 
@@ -272,7 +254,7 @@ function PhotoUpload({ value, onChange, bucket, beforeUse }) {
       <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
       {showLibrary && <ImageLibraryPicker onClose={() => setShowLibrary(false)} onChoose={async file => {
         if (beforeUse) {
-          const { data, error } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          const { data, error } = await storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
           if (error) throw error
           await beforeUse(data)
         }
@@ -441,7 +423,7 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
         sort_order: photos.length + cropIndex
       })
       if (insertError) {
-        await supabase.storage.from('puppy-photos').remove([decodeURIComponent(new URL(url).pathname.split('/puppy-photos/')[1])])
+        await storage.from('puppy-photos').remove([decodeURIComponent(new URL(url).pathname.split('/puppy-photos/')[1])])
         throw insertError
       }
 
@@ -627,7 +609,7 @@ function PuppyPhotosManager({ puppyId, coverUrl }) {
         const existing = await signaturesForPhotos(await galleryReferences())
         const pending = []
         for (const file of selectedFiles) {
-          const { data, error: downloadError } = await supabase.storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
+          const { data, error: downloadError } = await storage.from(file.storage_bucket || 'admin-files').download(file.storage_path)
           if (downloadError) throw downloadError
           const candidate = await signature(data)
           const match = findImageMatch(candidate, [...existing, ...pending])
@@ -1557,7 +1539,7 @@ function WaitlistTab() {
       portalUrl: PORTAL_URL
     })
     console.log('send-turn-email result:', result)
-    setMessage(`${nextInLine.name} has been notified and can now choose their puppy.`)
+    setMessage(result.preview ? `${nextInLine.name} can now choose their puppy. An email preview was saved; nothing was sent.` : `${nextInLine.name} has been notified and can now choose their puppy.`)
   } catch (err) {
     console.error('send-turn-email error:', err)
     setMessage(`${nextInLine.name} is now active. Email failed — notify them manually.`)
@@ -3169,6 +3151,8 @@ function EmailTab() {
         message: replyMessage,
         ...senderDetails,
       })
+      if (result.preview) setSendError('Email preview saved. Nothing was sent. Refresh email previews above to view it.')
+      if (result.queued) setSendError('Email queued for background delivery. Check email status above.')
       setReplyMessage('')
       if (result.email) {
         setEmails(current => [...current, result.email])
@@ -3183,7 +3167,9 @@ function EmailTab() {
   async function handleCompose() {
     setSending(true); setSendError('')
     try {
-      await callFunction('send-email-reply', { ...compose, ...senderDetails })
+      const result = await callFunction('send-email-reply', { ...compose, ...senderDetails })
+      if (result.preview) setSendError('Email preview saved. Nothing was sent. Refresh email previews above to view it.')
+      if (result.queued) setSendError('Email queued for background delivery. Check email status above.')
       setCompose({ to: '', subject: '', message: '' })
       setComposing(false)
       setViewFilter('sent')
@@ -3389,7 +3375,7 @@ function SettingsTab({ initialView = 'tools' }) {
       const total = result?.total_applications ?? 0
       const failed = result?.failed_count ?? 0
       setFailures(Array.isArray(result?.failures) ? result.failures : [])
-      setMessage(`Done. Sent ${sent}/${total} notifications${failed ? ` (${failed} failed)` : ''}.`)
+      setMessage(result.preview ? `Created ${result.preview_count || 0}/${total} notification previews. Nothing was sent.` : result.queued_count ? `Queued notifications for ${result.queued_count}/${total} applications${failed ? ` (${failed} failed)` : ''}. Check email status for delivery.` : `Done. Sent ${sent}/${total} notifications${failed ? ` (${failed} failed)` : ''}.`)
     } catch (err) {
       setMessage(`Error: ${err.message}`)
     }
@@ -3521,6 +3507,7 @@ function AdminDashboard() {
         ))}
       </div>
       {tab === 'puppies' && <PuppiesTab />}
+      {tab === 'email' && import.meta.env.VITE_DATA_API_URL && <RailwayEmailPreviews />}
       {tab === 'litters' && <LittersTab onBorn={notice => { setBornNotice(notice); setEmailView('campaigns'); setTab('email') }} />}
       {tab === 'dogs' && <DogsTab />}
       {tab === 'waitlist' && <WaitlistTab />}
