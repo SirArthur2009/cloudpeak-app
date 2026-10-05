@@ -49,4 +49,3 @@ Each repository uses the encrypted `RAILWAY_TOKEN` Actions secret, scoped to the
 Edit and push the repository that owns the change. Track progress in its Actions tab. No VS Code process is needed to keep the hosted app running.
 
 Railway stores account IDs/roles in `public.profiles` and email/name/phone in private `cloudpeak_internal.user_directory`. Admin user listing reads Railway. Verified Supabase users synchronize contact details at login and account creation/update; `node database-service/sync-auth.js` backfills existing users without changing Supabase accounts. Passwords and authentication sessions remain exclusively in Supabase Auth.
-
