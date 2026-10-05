@@ -8,7 +8,7 @@ import { normalize } from './reconciliation-values.js'
 // Calendar dates must not become midnight in this computer's local timezone.
 pg.types.setTypeParser(1082, value => value)
 
-const source = createClient(app.VITE_SUPABASE_URL,database.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY,{auth:{persistSession:false,autoRefreshToken:false}})
+const source = createClient(app.VITE_SUPABASE_URL,database.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY,{auth:{persistSession:false,autoRefreshToken:false}})
 const db = new pg.Client({connectionString:database.DATABASE_URL,ssl:{ca:await readFile(new URL('./database-ca.pem',import.meta.url)),checkServerIdentity:()=>undefined}})
 const schema = JSON.parse(await readFile(new URL('./source-schema.json',import.meta.url),'utf8'))
 const digest = (table,row) => createHash('sha256').update(JSON.stringify(Object.fromEntries(schema.columns.filter(c=>c.table===table).sort((a,b)=>a.name.localeCompare(b.name)).map(c=>[c.name,normalize(row[c.name],c)])))).digest('hex')

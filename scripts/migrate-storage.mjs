@@ -6,7 +6,7 @@ import { resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const app = parseEnv(readFileSync(resolve(root, '.env'), 'utf8'))
 const storage = parseEnv(readFileSync(resolve(root, 'storage-service/.env'), 'utf8'))
-const key = storage.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY
+const key = storage.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
 if (!key) throw new Error('A local Supabase service-role key is needed for private file migration.')
 const child = spawn(process.execPath, ['migrate.js', process.argv[2] || '--plan'], {
   cwd: resolve(root, 'storage-service'), stdio: 'inherit',

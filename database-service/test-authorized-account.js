@@ -9,7 +9,7 @@ import { listAuthUsers, syncVerifiedProfile } from './backend-db.js'
 
 if (!process.argv.includes('--authorized-disposable-account')) throw new Error('Explicit disposable-account test flag required.')
 const email = 'levigbryan+cloudpeak-test@gmail.com'
-const secret = database.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY
+const secret = database.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
 if (!secret) throw new Error('Server-only Auth key is missing.')
 const options = { auth: { persistSession: false, autoRefreshToken: false } }
 const provider = createClient(app.VITE_SUPABASE_URL, secret, options)

@@ -49,7 +49,8 @@ async function scan(directory) {
     if (entry.isDirectory()) await scan(path)
     else {
       if (entry.name === '.env' || entry.name.startsWith('.env.') || /snapshot|report|\.sql$/.test(entry.name) && !path.endsWith('backend-schema.sql')) throw new Error('Unexpected private file in bundle.')
-      if (local.VITE_SUPABASE_SERVICE_KEY && (await readFile(path)).includes(Buffer.from(local.VITE_SUPABASE_SERVICE_KEY))) throw new Error('Privileged key found in bundle.')
+      const contents = await readFile(path)
+      if ([local.VITE_SUPABASE_SERVICE_KEY, local.SUPABASE_SERVICE_ROLE_KEY, local.RESEND_API_KEY].some(key => key && contents.includes(Buffer.from(key)))) throw new Error('Privileged key found in bundle.')
     }
   }
 }

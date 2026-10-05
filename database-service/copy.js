@@ -5,7 +5,7 @@ import { createClient } from '@supabase/supabase-js'
 import { app, database, tables, publicTables } from './settings.js'
 
 const schema = JSON.parse(readFileSync(new URL('./source-schema.json', import.meta.url)))
-const source = createClient(app.VITE_SUPABASE_URL, app.VITE_SUPABASE_SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
+const source = createClient(app.VITE_SUPABASE_URL, app.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
 const quote = value => `"${value.replaceAll('"', '""')}"`
 const connection = new pg.Client({ connectionString: database.DATABASE_URL, ssl: { ca: readFileSync(new URL('./database-ca.pem', import.meta.url)), checkServerIdentity: () => undefined } })
 await connection.connect()

@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js'
 import { app, database } from './settings.js'
 import { installBackend, listAuthUsers, syncVerifiedProfile } from './backend-db.js'
 
-const key = database.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY
+const key = database.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
 if (!key) throw new Error('Configure the server-only SUPABASE_SERVICE_ROLE_KEY.')
 const auth = createClient(app.VITE_SUPABASE_URL, key, { auth: { persistSession: false, autoRefreshToken: false } }).auth.admin
 const pool = new pg.Pool({ connectionString: database.DATABASE_URL, ssl: { ca: readFileSync(new URL('./database-ca.pem', import.meta.url)), checkServerIdentity: () => undefined }, max: 2 })

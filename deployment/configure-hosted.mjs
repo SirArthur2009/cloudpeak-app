@@ -16,10 +16,11 @@ const variables = {
   WEBSITE_ORIGIN:'https://cloudpeak-hosted-test-production-0e41.up.railway.app',
   DATABASE_URL:privateUrl(database.DATABASE_URL), API_DATABASE_URL:privateUrl(database.API_DATABASE_URL),
   SUPABASE_URL:app.VITE_SUPABASE_URL, SUPABASE_ANON_KEY:app.VITE_SUPABASE_ANON_KEY,
+  ...(app.SUPABASE_PREVIOUS_ANON_KEY ? { SUPABASE_PREVIOUS_ANON_KEY: app.SUPABASE_PREVIOUS_ANON_KEY } : {}),
   EMAIL_MODE:'preview', AUTH_WRITES_ENABLED:'false', PORT:'8080',
 }
 for (const key of ['AWS_ENDPOINT_URL','AWS_DEFAULT_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','AWS_S3_BUCKET_NAME','S3_FORCE_PATH_STYLE']) if (storage[key]) variables[key] = storage[key]
-const serviceKey = database.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY
+const serviceKey = database.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
 if (serviceKey) variables.SUPABASE_SERVICE_ROLE_KEY = serviceKey
 variables.HOSTED_MODE = 'test'
 variables.LIVE_ACTIONS_APPROVED = 'false'

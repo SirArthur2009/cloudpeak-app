@@ -21,7 +21,7 @@ const pool = new pg.Pool({ connectionString: database.API_DATABASE_URL, ssl, max
 const backendPool = new pg.Pool({ connectionString: database.DATABASE_URL, ssl, max: 3 })
 await installBackend(backendPool)
 const auth = createClient(app.VITE_SUPABASE_URL, app.VITE_SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
-const serviceKey = database.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || app.VITE_SUPABASE_SERVICE_KEY
+const serviceKey = database.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
 const admin = serviceKey ? createClient(app.VITE_SUPABASE_URL, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } }).auth.admin : null
 const backendEnv = { ...database, ...process.env, PORTAL_URL: process.env.PORTAL_URL || database.PORTAL_URL || 'http://127.0.0.1:5173/' }
 const mail = createMailer({ pool: backendPool, env: backendEnv })
@@ -71,7 +71,10 @@ const server = createServer(async (request, response) => {
     if ((!match || !tables.includes(match[1])) && !actionNames.has(action)) return send(404, { message: 'Unknown data endpoint.' })
     const token = String(request.headers.authorization || '').replace(/^Bearer\s+/i, '')
     let user = null, role = 'cloudpeak_anon'
-    if (token && token !== app.VITE_SUPABASE_ANON_KEY) {
+    // The previous public anonymous key grants no user identity. Recognizing it
+    // here lets cached website pages keep using public Railway data after the
+    // legacy Supabase API keys are disabled. Private access still calls getUser.
+    if (token && token !== app.VITE_SUPABASE_ANON_KEY && token !== app.SUPABASE_PREVIOUS_ANON_KEY) {
       const result = await auth.auth.getUser(token)
       if (result.error || !result.data.user) return send(401, { message: 'Supabase session is invalid or expired.' })
       user = result.data.user
