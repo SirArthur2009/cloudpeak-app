@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 
 const mime = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.pdf': 'application/pdf' }
-export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websiteAliases = [], appRoot, websiteRoot, dataUrl, storageUrl, supabaseUrl, upstreamOrigin, fetchImpl = fetch }) {
+export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websiteAliases = [], appRoot, websiteRoot, dataUrl, storageUrl, supabaseUrl, upstreamOrigin, fetchImpl = fetch, proxyTimeoutMs = 30000 }) {
   const sites = new Map([[new URL(appOrigin).host, { origin: appOrigin, root: resolve(appRoot), app: true }], [new URL(websiteOrigin).host, { origin: websiteOrigin, root: resolve(websiteRoot), app: false }]])
   if (sites.size !== 2) throw new Error('App and website must use different hostnames.')
   for (const [aliases, root, app] of [[appAliases, appRoot, true], [websiteAliases, websiteRoot, false]]) {
@@ -40,7 +40,7 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
         for (const name of ['authorization','apikey','content-type','prefer','range','range-unit','origin','x-client-info','accept','accept-profile','content-profile','svix-id','svix-timestamp','svix-signature']) if (req.headers[name]) headers[name] = req.headers[name]
         // Local built previews reuse an already-running localhost backend.
         if (upstreamOrigin && headers.origin) headers.origin = upstreamOrigin
-        const init = { method: req.method, headers, signal: AbortSignal.timeout(30000), redirect: 'manual' }
+        const init = { method: req.method, headers, signal: AbortSignal.timeout(proxyTimeoutMs), redirect: 'manual' }
         if (!['GET','HEAD'].includes(req.method)) { init.body = Readable.toWeb(req); init.duplex = 'half' }
         const upstream = await fetchImpl(`${data ? dataUrl : storageUrl}${url.pathname.slice(prefix.length) || '/'}${url.search}`, init)
         for (const name of ['content-type','content-range','range-unit','preference-applied','location','cache-control','access-control-allow-origin','access-control-allow-headers','access-control-allow-methods','access-control-expose-headers','vary']) if (upstream.headers.has(name)) res.setHeader(name, upstream.headers.get(name))
@@ -54,7 +54,9 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
         } else {
           res.writeHead(upstream.status)
           if (req.method === 'HEAD' || !upstream.body) { await upstream.body?.cancel(); res.end() }
-          else await pipeline(Readable.fromWeb(upstream.body), res)
+          // Pipeline owns Web Stream cancellation and errors directly, including
+          // timeouts that arrive after the downstream client disconnects.
+          else await pipeline(upstream.body, res)
         }
         return
       }

@@ -5,6 +5,67 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createGateway } from './gateway.mjs'
 import { request as httpRequest } from 'node:http'
+import { createServer } from 'node:http'
+
+test('upload and response timeouts leave the gateway available', async t => {
+  const upstream = createServer((req, res) => {
+    req.resume()
+    if (req.url === '/stream') {
+      res.writeHead(200, { 'content-type': 'application/octet-stream' })
+      res.write('partial response')
+    }
+  })
+  await new Promise(resolve => upstream.listen(0, '127.0.0.1', resolve))
+  const upstreamUrl = `http://127.0.0.1:${upstream.address().port}`
+  const server = createGateway({ appOrigin: 'https://app.example', websiteOrigin: 'https://web.example', appRoot: '.', websiteRoot: '.', dataUrl: upstreamUrl, storageUrl: upstreamUrl, supabaseUrl: 'https://auth.example', proxyTimeoutMs: 50 })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => {
+    server.closeAllConnections(); upstream.closeAllConnections()
+    await Promise.all([new Promise(resolve => server.close(resolve)), new Promise(resolve => upstream.close(resolve))])
+  })
+  const base = `http://127.0.0.1:${server.address().port}`
+  const status = await new Promise((resolve, reject) => {
+    const req = httpRequest(`${base}/railway-api/rest/v1/profiles`, { method: 'POST', headers: { host: 'app.example', 'content-type': 'application/json' } }, res => {
+      res.resume()
+      res.on('end', () => { resolve(res.statusCode); req.destroy() })
+    })
+    req.on('error', reject)
+    req.end('{}')
+  })
+  assert.equal(status, 502)
+  const nextStatus = await new Promise((resolve, reject) => {
+    const req = httpRequest(`${base}/railway-api/rest/v1/profiles`, { headers: { host: 'app.example' } }, res => {
+      res.resume(); res.on('end', () => resolve(res.statusCode))
+    })
+    req.on('error', reject); req.end()
+  })
+  assert.equal(nextStatus, 502)
+  await new Promise((resolve, reject) => {
+    const req = httpRequest(`${base}/railway-storage/stream`, { headers: { host: 'app.example' } }, res => {
+      assert.equal(res.statusCode, 200)
+      res.resume()
+      res.on('error', resolve)
+      res.on('end', () => reject(new Error('Timed-out response should be interrupted')))
+    })
+    req.on('error', reject); req.end()
+  })
+  await new Promise((resolve, reject) => {
+    const req = httpRequest(`${base}/railway-storage/stream`, { headers: { host: 'app.example' } }, res => {
+      res.once('data', () => { res.destroy(); resolve() })
+      res.on('error', reject)
+    })
+    req.on('error', reject); req.end()
+  })
+  // Let the upstream timeout fire after the downstream has gone away.
+  await new Promise(resolve => setTimeout(resolve, 100))
+  const alive = await new Promise((resolve, reject) => {
+    const req = httpRequest(`${base}/`, { headers: { host: 'unknown.example' } }, res => {
+      res.resume(); res.on('end', () => resolve(res.statusCode))
+    })
+    req.on('error', reject); req.end()
+  })
+  assert.equal(alive, 421)
+})
 
 test('host routing, SPA refresh, traversal denial and Railway proxy behavior', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'cloudpeak-gateway-'))
