@@ -2,7 +2,9 @@
 
 The production design uses a **Supabase Edge Function** to sign direct browser requests to Railway's private bucket. No public Railway service or domain is needed. Supabase continues to provide login and database access. Only URL signatures, authorization checks and redirects pass through the function; uploaded and downloaded file bytes travel directly between the browser and Railway.
 
-`supabase/functions/storage-files/handler.js` is shared by the Deno Edge Function and the Node local server. Private admin files require a verified Supabase session and an admin role queried under the caller's RLS policies. Existing public photo and pedigree prefixes receive temporary signed redirects. User-editable metadata never determines access.
+The live Railway server uses `supabase/functions/storage-files/handler.js`. It validates Supabase sessions and reads roles from Railway. The Supabase `storage-files` function now runs `legacy-proxy.js`, forwarding saved compatibility URLs to the live Railway gateway. It no longer queries Supabase business tables. Public photo and pedigree links receive temporary signed redirects. User-editable metadata never determines access.
+
+The original migration and standalone signer instructions below describe the setup before the hosted Railway cutover. The compatibility function entrypoint now requires no S3 credentials; the Railway server owns those credentials and performs file authorization.
 
 ## Launch from VS Code
 

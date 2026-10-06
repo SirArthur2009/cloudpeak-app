@@ -97,6 +97,6 @@ verify_jwt = true
 [functions.storage-files]
 enabled = true
 # Public photo redirects need anonymous access. POST routes independently
-# validate the user with getUser and check profiles.role under the user's RLS.
+# forward to Railway, which verifies the session and checks its stored role.
 verify_jwt = false
 entrypoint = "./functions/storage-files/index.ts"
