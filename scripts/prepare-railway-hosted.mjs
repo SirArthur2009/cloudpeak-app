@@ -30,7 +30,7 @@ for (const entry of await readdir(sourceWebsite, { withFileTypes: true })) {
   }
 }
 for (const directory of ['assets','css','js']) await cp(join(sourceWebsite, directory), join(website, directory), { recursive: true, filter: path => !path.split(/[\\/]/).some(part => part.startsWith('.')) })
-for (const name of ['sitemap.xml', 'robots.txt']) await cp(join(sourceWebsite, 'public', name), join(website, name))
+for (const name of ['sitemap.xml', 'robots.txt']) await cp(join(sourceWebsite, name), join(website, name))
 const release = { appSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), websiteSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceWebsite, encoding: 'utf8' }).trim(), buildId: new Date().toISOString(), authProvider: process.env.VITE_AUTH_PROVIDER }
 for (const directory of [resolve(bundle, 'public/app'), website]) await writeFile(join(directory, 'release.json'), JSON.stringify(release))
 const files = {
