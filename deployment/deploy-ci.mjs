@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { verifyRelease } from './verify-release.mjs'
 const bundle = JSON.parse(await readFile('deployment/bundle/latest.json', 'utf8'))
 if (bundle.buildMode !== 'live') throw new Error('CI must deploy a live bundle.')
 const expected = JSON.parse(await readFile(`${bundle.path}/public/app/release.json`, 'utf8'))
@@ -13,12 +14,23 @@ const origins = ['https://portal.cloudpeaksilverlabradors.com', 'https://cloudpe
 for (let attempt = 0; attempt < 36; attempt++) {
   const checks = await Promise.all(origins.map(async origin => {
     try {
-      const release = await fetch(`${origin}/release.json?t=${Date.now()}`, { signal: AbortSignal.timeout(10000) }).then(r => r.json())
-      const health = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(10000) }).then(r => r.json())
-      return release.appSha === expected.appSha && release.websiteSha === expected.websiteSha && release.buildId === expected.buildId && release.authProvider === expected.authProvider && health.ok && health.releaseMode === 'live' && health.auth === 'Better Auth'
-    } catch { return false }
+      const read = async path => {
+        const response = await fetch(`${origin}${path}?t=${Date.now()}`, { signal: AbortSignal.timeout(10000), cache: 'no-store' })
+        if (!response.ok) throw new Error(`${path} returned HTTP ${response.status}`)
+        return response.json()
+      }
+      const release = await read('/release.json')
+      const health = await read('/health')
+      return { release, health }
+    } catch (error) { console.log(`${origin}: ${error.message}`); return null }
   }))
-  if (checks.every(Boolean)) { console.log('Both live domains verified at the deployed revisions.'); process.exit(0) }
+  // Concurrent workflows in the two repositories can deploy the same revisions.
+  // Require both domains to agree on one build, including a replacement build.
+  if (checks.every(Boolean) && verifyRelease(checks, expected)) {
+    console.log(`Both live domains verified at app ${expected.appSha} / website ${expected.websiteSha}, build ${checks[0].release.buildId}.`)
+    process.exit(0)
+  }
+  console.log(`Waiting for both live domains at the expected revisions: ${JSON.stringify(checks)}`)
   await new Promise(resolve => setTimeout(resolve, 5000))
 }
 throw new Error('Live domains did not serve the expected healthy release within three minutes. Review Railway deployment status.')

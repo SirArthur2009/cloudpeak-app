@@ -13,7 +13,7 @@
     "dev:storage:deployed": "node scripts/dev-storage.mjs --deployed-storage",
     "dev:railway": "node scripts/dev-railway-database.mjs",
     "prepare:railway": "node scripts/prepare-railway-hosted.mjs",
-    "test:deployment": "node --test deployment/gateway.test.mjs deployment/runtime-config.test.mjs",
+    "test:deployment": "node --test deployment/gateway.test.mjs deployment/runtime-config.test.mjs deployment/verify-release.test.mjs",
     "preview:deployment": "node deployment/preview.mjs",
     "test:railway": "node --test database-service/backend.test.js scripts/puppy-display.test.mjs",
     "test:owner-updates": "node --test database-service/owner-updates.test.js",
