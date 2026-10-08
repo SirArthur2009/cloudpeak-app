@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises'
 import { isIP } from 'node:net'
 
 const mime = { '.xml': 'application/xml; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.ico': 'image/x-icon', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.pdf': 'application/pdf' }
-export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websiteAliases = [], appRoot, websiteRoot, dataUrl, storageUrl, supabaseUrl, upstreamOrigin, trustRailwayProxy = false, fetchImpl = fetch, proxyTimeoutMs = 30000 }) {
+export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websiteAliases = [], appRoot, websiteRoot, dataUrl, storageUrl, supabaseUrl, upstreamOrigin, trustRailwayProxy = false, fetchImpl = fetch, proxyTimeoutMs = 30000, websiteOnly = false }) {
   const sites = new Map([[new URL(appOrigin).host, { origin: appOrigin, root: resolve(appRoot), app: true }], [new URL(websiteOrigin).host, { origin: websiteOrigin, root: resolve(websiteRoot), app: false }]])
   if (sites.size !== 2) throw new Error('App and website must use different hostnames.')
   for (const [aliases, root, app] of [[appAliases, appRoot, true], [websiteAliases, websiteRoot, false]]) {
@@ -17,6 +17,7 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
     }
   }
   const siteOrigins = [...sites.values()].map(site => site.origin)
+  if (websiteOnly) for (const [host, site] of sites) if (site.app) sites.delete(host)
   const readPublicIds = async table => {
     const ids = []
     const pageSize = 1000
@@ -59,6 +60,11 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
     try {
       const url = new URL(req.url, 'http://gateway.invalid')
       if (url.pathname === '/health' && req.method === 'GET') {
+        // The isolated website's readiness depends only on its own files.
+        if (websiteOnly) {
+          await stat(resolve(websiteRoot, 'index.html'))
+          return send(200, { ok: true, service: 'website' })
+        }
         const [dataHealth, storageHealth] = await Promise.all([`${dataUrl}/health`, `${storageUrl}/functions/v1/storage-files/health`].map(async endpoint => {
           const response = await fetchImpl(endpoint, { signal: AbortSignal.timeout(5000) })
           return { ok: response.ok, body: await response.json() }
@@ -92,7 +98,8 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
           const text = await upstream.text()
           const oldPrefix = `${supabaseUrl}/functions/v1/storage-files/public/`
           res.writeHead(upstream.status)
-          res.end(text.replaceAll(oldPrefix, `${site.origin}/railway-storage/functions/v1/storage-files/public/`))
+          const publicPrefix = `${site.origin}/railway-storage/functions/v1/storage-files/public/`
+          res.end(text.replaceAll(oldPrefix, publicPrefix).replaceAll(`${storageUrl}/functions/v1/storage-files/public/`, publicPrefix))
         } else {
           res.writeHead(upstream.status)
           if (req.method === 'HEAD' || !upstream.body) { await upstream.body?.cancel(); res.end() }

@@ -10,7 +10,9 @@ for (const [repo, sha] of [['cloudpeak-app', expected.appSha], ['cloudpeak-web',
 }
 const result = spawnSync('railway', ['up', '--service', '11612220-77f2-4c35-85c9-dd99d1b0cb1b', '--environment', 'bd380cbe-c04c-4174-a8b7-5e126c99dc06', '--path-as-root', '--no-gitignore', '--detach', '--message', `app ${expected.appSha.slice(0, 12)} / website ${expected.websiteSha.slice(0, 12)}`, bundle.path], { stdio: 'inherit' })
 if (result.status !== 0) throw new Error('Railway deployment failed.')
-const origins = ['https://portal.cloudpeaksilverlabradors.com', 'https://cloudpeaksilverlabradors.com']
+const origins = process.env.WEBSITE_RAILWAY_SERVICE_ID
+  ? ['https://portal.cloudpeaksilverlabradors.com']
+  : ['https://portal.cloudpeaksilverlabradors.com', 'https://cloudpeaksilverlabradors.com']
 for (let attempt = 0; attempt < 36; attempt++) {
   const checks = await Promise.all(origins.map(async origin => {
     try {
