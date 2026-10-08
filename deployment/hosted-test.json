@@ -2,7 +2,7 @@
   "projectId": "ba2498be-e030-473a-81b4-a14d05dd8120",
   "environmentId": "bd380cbe-c04c-4174-a8b7-5e126c99dc06",
   "serviceId": "11612220-77f2-4c35-85c9-dd99d1b0cb1b",
-  "deploymentId": "eb671aa5-80c3-4a4a-967d-a7996ff6ed3f",
+  "deploymentId": "c0ff511a-6ae7-48cc-96b0-152728f3ac5e",
   "appUrl": "https://cloudpeak-hosted-test-production.up.railway.app",
   "websiteUrl": "https://cloudpeak-hosted-test-production-0e41.up.railway.app",
   "emailMode": "live",
@@ -21,11 +21,24 @@
     "hostedDisposableAccountChecks": true,
     "uploadedBytesMatchSha256": true,
     "privateImagePreview": true,
-    "disposableUploadsCleaned": true
+    "disposableUploadsCleaned": true,
+    "betterAuthLogin": true,
+    "betterAuthClientPermissions": true,
+    "betterAuthPasswordChange": true,
+    "betterAuthRevocation": true,
+    "betterAuthClientAddress": true,
+    "betterAuthDisposableAccountCleaned": true
   },
   "cutoverStatus": "Live custom domains verified over HTTPS; actual inbound delivery and post-cutover user checks pending",
   "activatedAt": "2026-10-05T23:16:09.460Z",
   "liveDnsChanged": true,
   "customDomainsHttpsVerified": true,
-  "domainSwitchVerifiedAt": "2026-10-05T23:20:53.162Z"
+  "domainSwitchVerifiedAt": "2026-10-05T23:20:53.162Z",
+  "authProvider": "Better Auth",
+  "authBuildId": "2026-10-06T23:59:20.404Z",
+  "authMigrationVerifiedAt": "2026-10-07T00:01:34.859Z",
+  "authAccountsImported": 8,
+  "emailNavigationBuildId": "2026-10-07T02:26:54.025Z",
+  "emailNavigationVerifiedAt": "2026-10-07T02:28:28.077Z",
+  "applicationEmails": "cloudpeaksilverlabs@yahoo.com"
 }

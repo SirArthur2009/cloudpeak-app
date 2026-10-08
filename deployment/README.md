@@ -1,4 +1,12 @@
+# Production Better Auth deployment — October 6, 2026
+
+Deployment `c3bcbbef-0374-4f66-9b4f-4b964c5fd7d6` serves the live portal and website with Better Auth. Both domains passed health and build-ID verification (`2026-10-06T23:59:20.404Z`). Eight accounts retain their original UUIDs, passwords and Railway roles. Hosted checks passed for login, client permissions, admin denial, forced password changes, session revocation, logout and deletion. The temporary verification account and profile were removed; no test emails were sent. Auth rate limiting receives the real client address from Railway's edge through the gateway.
+
+The release was uploaded directly from the local workspace. Source changes, including the matching GitHub Actions build configuration, are still uncommitted. Future source deployments must include these changes and set `AUTH_PROVIDER=better-auth`. Server credentials remain in Railway. See [the migration guide](../database-service/BETTER-AUTH-MIGRATION.md) for rollback considerations. The older deployment notes below describe the earlier Supabase Auth migration stages.
+
 # Railway hosted test
+
+For the live production backup audit and recovery steps, see [BACKUP-RESTORE.md](BACKUP-RESTORE.md). The authenticated Railway page confirms no Postgres backups and a Pro-plan requirement for native backups/PITR. Independent backups and a restore drill remain unverified.
 
 One Linux container serves the app and website on two different HTTPS hostnames. Its gateway exposes only port 8080. Data API, PostgREST and storage signer bind to loopback. Postgres and the bucket remain private; public puppy images redirect to short-lived S3 links. Supabase handles login. Startup defaults to preview emails and blocked Auth writes. The current deployed build is restricted staging: only the approved test email recipient and disposable account may receive external actions. See `CUTOVER.md` for the verified live candidate and coordinated release sequence; the live domains still point to Netlify.
 

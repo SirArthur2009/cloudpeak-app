@@ -1,4 +1,4 @@
-export const buckets = new Set(['admin-files', 'puppy-photos', 'dog-photos', 'pedigree-files'])
+export const buckets = new Set(['admin-files', 'owner-puppy-photos', 'puppy-photos', 'dog-photos', 'pedigree-files'])
 export const publicBuckets = new Set(['puppy-photos', 'dog-photos', 'pedigree-files'])
 
 export function objectKey(bucket, path) {

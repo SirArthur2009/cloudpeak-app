@@ -22,7 +22,7 @@ async function readJson(req) {
 }
 
 // Shared by the deployed Deno function and the Node local runner.
-export function createStorageHandler({ origins, getUser, getRole, readUrl, uploadUrl, remove, health }) {
+export function createStorageHandler({ origins, getUser, getRole, ownsSoldPuppy, readUrl, uploadUrl, remove, health }) {
   if (!origins.size || origins.has('*')) throw new Error('Specific ALLOWED_ORIGINS are required.')
   return async req => {
     const headers = new Headers({ 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' })
@@ -57,12 +57,23 @@ export function createStorageHandler({ origins, getUser, getRole, readUrl, uploa
       const user = await getUser(token)
       if (!user) throw fail(401, 'Session expired. Please sign in again.')
       const role = await getRole(token, user.id)
-      if (!canAccess(role, bucket, rest)) throw fail(403, 'Admin access required.')
+      const ownerAccess = role === 'client' && bucket === 'owner-puppy-photos' && ['sign-read','sign-upload'].includes(rest)
+      if (!canAccess(role, bucket, rest) && !ownerAccess) throw fail(403, 'Admin access required.')
       const input = await readJson(req)
+      if (ownerAccess) {
+        const paths = rest === 'sign-upload' ? [input.path] : input.paths
+        if (!Array.isArray(paths) || !paths.length || paths.length > 100) throw fail(400, 'Provide 1 to 100 paths.')
+        for (const path of paths) {
+          objectKey(bucket, path)
+          const [ownerId, puppyId, file, ...extra] = path.split('/')
+          if (ownerId !== user.id || !/^\d+$/.test(puppyId) || !file || extra.length || !ownsSoldPuppy || !await ownsSoldPuppy(token, user, puppyId)) throw fail(403, 'You can only access photos for your sold puppy.')
+        }
+      }
       if (rest === 'sign-upload') {
         const key = objectKey(bucket, input.path)
         if (!Number.isSafeInteger(input.size) || input.size < 0 || input.size > 50 * 1024 * 1024) throw fail(400, 'Files must be 50 MB or smaller.')
         if (typeof input.contentType !== 'string' || !input.contentType || input.contentType.length > 200 || /[\r\n]/.test(input.contentType)) throw fail(400, 'Invalid content type.')
+        if (bucket === 'owner-puppy-photos' && (input.size > 10 * 1024 * 1024 || !['image/jpeg','image/png','image/webp'].includes(input.contentType))) throw fail(400, 'Upload a JPG, PNG or WebP photo up to 10 MB.')
         return json(200, { uploadUrl: await uploadUrl(key, input.contentType, input.size) })
       }
       if (!Array.isArray(input.paths) || !input.paths.length || input.paths.length > 100) throw fail(400, 'Provide 1 to 100 paths.')

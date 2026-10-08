@@ -6,6 +6,8 @@ import { resolve } from 'node:path'
 import { SignJWT } from 'jose'
 import pg from 'pg'
 import { createClient } from '@supabase/supabase-js'
+import { toNodeHandler } from 'better-auth/node'
+import { createBetterAuth, createBetterAuthAdmin, legacyUser } from './better-auth.js'
 import { app, database, tables } from './settings.js'
 import { installBackend, syncVerifiedProfile } from './backend-db.js'
 import { createMailer } from './mail.js'
@@ -20,9 +22,15 @@ await check.end()
 const pool = new pg.Pool({ connectionString: database.API_DATABASE_URL, ssl, max: 4 })
 const backendPool = new pg.Pool({ connectionString: database.DATABASE_URL, ssl, max: 3 })
 await installBackend(backendPool)
+const authEnv = { ...database, ...process.env }
+if (authEnv.AUTH_PROVIDER && !['supabase', 'better-auth'].includes(authEnv.AUTH_PROVIDER)) throw new Error('Invalid AUTH_PROVIDER.')
+const useBetterAuth = authEnv.AUTH_PROVIDER === 'better-auth'
+const authPool = useBetterAuth ? new pg.Pool({ connectionString: database.DATABASE_URL, ssl, max: 3, options: '-c search_path=cloudpeak_auth' }) : null
+const betterAuth = useBetterAuth ? createBetterAuth(authPool, authEnv) : null
+const authHandler = betterAuth ? toNodeHandler(betterAuth) : null
 const auth = createClient(app.VITE_SUPABASE_URL, app.VITE_SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } })
 const serviceKey = database.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || app.SUPABASE_SERVICE_ROLE_KEY
-const admin = serviceKey ? createClient(app.VITE_SUPABASE_URL, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } }).auth.admin : null
+const admin = useBetterAuth ? createBetterAuthAdmin(authPool) : serviceKey ? createClient(app.VITE_SUPABASE_URL, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } }).auth.admin : null
 const backendEnv = { ...database, ...process.env, PORTAL_URL: process.env.PORTAL_URL || database.PORTAL_URL || 'http://127.0.0.1:5173/' }
 const mail = createMailer({ pool: backendPool, env: backendEnv })
 const actions = createActions({ pool: backendPool, authAdmin: admin, mail, env: backendEnv })
@@ -54,30 +62,50 @@ const server = createServer(async (request, response) => {
   if (origin) {
     response.setHeader('Access-Control-Allow-Origin', origin)
     response.setHeader('Vary', 'Origin')
+    response.setHeader('Access-Control-Allow-Credentials', 'true')
     response.setHeader('Access-Control-Allow-Headers', 'authorization,apikey,content-type,prefer,range,range-unit,x-client-info,accept-profile,content-profile')
     response.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,POST,PATCH,DELETE,OPTIONS')
-    response.setHeader('Access-Control-Expose-Headers', 'Content-Range,Range-Unit,Preference-Applied')
+    response.setHeader('Access-Control-Expose-Headers', 'Content-Range,Range-Unit,Preference-Applied,set-auth-token')
   }
   if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return }
   try {
     const url = new URL(request.url, `http://127.0.0.1:${port}`)
+    if (authHandler && url.pathname.startsWith('/api/auth/')) {
+      // The gateway strips /railway-api; Better Auth routes against its public URL.
+      const publicPath = new URL((await betterAuth.$context).baseURL).pathname.replace(/\/$/, '')
+      request.url = `${publicPath}${url.pathname.slice('/api/auth'.length)}${url.search}`
+      return await authHandler(request, response)
+    }
+    if (useBetterAuth && url.pathname === '/auth-user' && request.method === 'GET') {
+      const session = await betterAuth.api.getSession({ headers: new Headers(request.headers) })
+      if (!session) return send(401, { message: 'Session is invalid or expired.' })
+      const user = legacyUser(session.user)
+      await syncVerifiedProfile(backendPool, user)
+      return send(200, { user })
+    }
     if (url.pathname === '/health') {
       const result = await fetch(`${restUrl}/puppies?select=id&limit=1`)
       await result.body?.cancel()
-      return send(result.ok ? 200 : 503, { ok: result.ok, database: 'Railway', auth: 'Supabase', releaseMode: backendEnv.HOSTED_MODE || 'test', emailMode: mail.mode, authWrites: backendEnv.AUTH_WRITES_ENABLED === 'true', actionsRestricted: Boolean(backendEnv.EMAIL_ALLOWED_RECIPIENTS || backendEnv.AUTH_ALLOWED_EMAILS) })
+      return send(result.ok ? 200 : 503, { ok: result.ok, database: 'Railway', auth: useBetterAuth ? 'Better Auth' : 'Supabase', releaseMode: backendEnv.HOSTED_MODE || 'test', emailMode: mail.mode, authWrites: backendEnv.AUTH_WRITES_ENABLED === 'true', actionsRestricted: Boolean(backendEnv.EMAIL_ALLOWED_RECIPIENTS || backendEnv.AUTH_ALLOWED_EMAILS) })
     }
     const match = url.pathname.match(/^\/rest\/v1\/([a-z_]+)$/)
     const action = url.pathname.match(/^\/functions\/v1\/([a-z-]+)$/)?.[1]
-    if ((!match || !tables.includes(match[1])) && !actionNames.has(action)) return send(404, { message: 'Unknown data endpoint.' })
+    if ((!match || ![...tables, 'puppy_owner_updates'].includes(match[1])) && !actionNames.has(action)) return send(404, { message: 'Unknown data endpoint.' })
     const token = String(request.headers.authorization || '').replace(/^Bearer\s+/i, '')
     let user = null, role = 'cloudpeak_anon'
     // The previous public anonymous key grants no user identity. Recognizing it
     // here lets cached website pages keep using public Railway data after the
     // legacy Supabase API keys are disabled. Private access still calls getUser.
     if (token && token !== app.VITE_SUPABASE_ANON_KEY && token !== app.SUPABASE_PREVIOUS_ANON_KEY) {
-      const result = await auth.auth.getUser(token)
-      if (result.error || !result.data.user) return send(401, { message: 'Supabase session is invalid or expired.' })
-      user = result.data.user
+      if (useBetterAuth) {
+        const session = await betterAuth.api.getSession({ headers: new Headers({ authorization: `Bearer ${token}` }) })
+        if (!session) return send(401, { message: 'Session is invalid or expired.' })
+        user = legacyUser(session.user)
+      } else {
+        const result = await auth.auth.getUser(token)
+        if (result.error || !result.data.user) return send(401, { message: 'Session is invalid or expired.' })
+        user = result.data.user
+      }
       role = await syncVerifiedProfile(backendPool, user)
     }
     if (action) {
@@ -117,9 +145,9 @@ const server = createServer(async (request, response) => {
     else response.end()
   }
 })
-server.listen(port, '127.0.0.1', () => console.log(`Railway test data API: http://127.0.0.1:${port} (Supabase login; email ${mail.mode})`))
+server.listen(port, '127.0.0.1', () => console.log(`Railway data API: http://127.0.0.1:${port} (${useBetterAuth ? 'Better Auth' : 'Supabase'} login; email ${mail.mode})`))
 let stopping = false
-async function stop() { if (stopping) return; stopping = true; clearInterval(deliveryTimer); server.close(); rest.kill(); await Promise.all([pool.end(),backendPool.end()]) }
+async function stop() { if (stopping) return; stopping = true; clearInterval(deliveryTimer); server.close(); rest.kill(); await Promise.all([pool.end(),backendPool.end(),authPool?.end()]) }
 rest.on('exit', () => { stop(); process.exitCode = 1 })
 process.on('SIGINT', stop)
 process.on('SIGTERM', stop)

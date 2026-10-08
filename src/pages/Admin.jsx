@@ -14,6 +14,7 @@ import { estimatedTimeRemaining } from '../lib/progressEta'
 import { renderCampaignMarkdown } from '../../supabase/functions/_shared/campaignMarkdown'
 import EmailEditor from './EmailEditor'
 import RailwayEmailPreviews from './RailwayEmailPreviews'
+import PuppyUpdates from './PuppyUpdates'
 
 const FUNCTIONS_URL = import.meta.env.VITE_SUPABASE_FUNCTIONS_URL
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL
@@ -964,7 +965,7 @@ function PuppiesTab() {
                   <select style={inputStyle} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}>
                     <option value="available">Available</option>
                     <option value="reserved">Reserved</option>
-                    <option value="sold">Sold</option>
+                    <option value="sold" disabled={!['reserved', 'sold'].includes(puppies.find(p => p.id === editing)?.status)}>Sold</option>
                   </select>
                 </div>
                 <div>
@@ -1032,7 +1033,7 @@ function PuppiesTab() {
                   {[p.gender, p.color, p.collar_color ? `${p.collar_color} collar` : null].filter(Boolean).join(' · ')}
                 </p>
                 {p.litters?.name && <p style={{ fontSize: '0.8rem', color: '#888' }}>{p.litters.name}</p>}
-                {p.status === 'reserved' && reservers[p.id] && <p style={{ fontSize: '0.8rem', color: '#888' }}>Reserved by {reservers[p.id]}</p>}
+                {['reserved', 'sold'].includes(p.status) && reservers[p.id] && <p style={{ fontSize: '0.8rem', color: '#888' }}>{p.status === 'sold' ? 'Owned' : 'Reserved'} by {reservers[p.id]}</p>}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', flexShrink: 0 }}>
                 {p.status === 'reserved' && (
@@ -1320,7 +1321,7 @@ function WaitlistTab() {
 
   async function fetchAll(forLitterId = selectedLitterId) {
     const [{ data: waitlistData }, { data: littersData }, { data: puppiesData }] = await Promise.all([
-      supabase.from('waitlist').select('*, puppies(name, color, gender)').order('position'),
+      supabase.from('waitlist').select('*, puppies(name, color, gender, status)').order('position'),
       supabase.from('litters').select('id, name, birth_date, born_date').order('created_at', { ascending: false }),
       supabase.from('puppies').select('litter_id, status')
     ])
@@ -1683,7 +1684,7 @@ function WaitlistTab() {
               <p style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
                 {w.pending_approval ? <span style={{ color: '#b36200', fontWeight: 600 }}>⏳ Pending approval</span>
                   : w.is_active ? <span style={{ color: '#5555cc', fontWeight: 600 }}>🐾 Choosing now</span>
-                  : w.selected_puppy_id ? <span style={{ color: '#2d7a3a' }}>✓ Reserved: {w.puppies?.name}</span>
+                  : w.selected_puppy_id ? <span style={{ color: '#2d7a3a' }}>✓ {w.puppies?.status === 'sold' ? 'Sold' : 'Reserved'}: {w.puppies?.name}</span>
                   : <span style={{ color: '#aaa' }}>Waiting</span>}
               </p>
             </div>
@@ -3031,10 +3032,13 @@ function EmailTab() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [selectedThreadId, setSelectedThreadId] = useState(null)
+  const threadPanelRef = useRef(null)
+  const [messageNavigation, setMessageNavigation] = useState(0)
   const [replyMessage, setReplyMessage] = useState('')
   const replyRef = useRef(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState('')
+  const [sendNotice, setSendNotice] = useState('')
   const [viewFilter, setViewFilter] = useState('inbox') // 'inbox' or 'archived'
   const [composing, setComposing] = useState(false)
   const [compose, setCompose] = useState({ to: '', subject: '', message: '' })
@@ -3124,8 +3128,17 @@ function EmailTab() {
 
   const selectedThread = allThreads.find(t => t.threadId === selectedThreadId) || null
 
+  useEffect(() => {
+    if (!selectedThreadId || loading || !messageNavigation) return
+    const panel = threadPanelRef.current
+    panel?.focus({ preventScroll: true })
+    panel?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'start' })
+  }, [selectedThreadId, messageNavigation, loading])
+
   async function selectThread(thread) {
     setSelectedThreadId(thread.threadId)
+    setMessageNavigation(current => current + 1)
+    setComposing(false)
     setReplyMessage('')
     setSendError('')
     const unreadIds = thread.messages.filter(m => m.direction === 'inbound' && !m.is_read).map(m => m.id)
@@ -3143,6 +3156,7 @@ function EmailTab() {
 
     setSending(true)
     setSendError('')
+    setSendNotice('')
     try {
       const result = await callFunction('send-email-reply', {
         thread_id: selectedThread.threadId,
@@ -3151,8 +3165,7 @@ function EmailTab() {
         message: replyMessage,
         ...senderDetails,
       })
-      if (result.preview) setSendError('Email preview saved. Nothing was sent. Refresh email previews above to view it.')
-      if (result.queued) setSendError('Email queued for background delivery. Check email status above.')
+      setSendNotice(result.preview ? 'Email preview saved. Nothing was sent. Refresh email previews above to view it.' : result.queued ? 'Email queued for background delivery. Check email status above.' : 'Email sent successfully.')
       setReplyMessage('')
       if (result.email) {
         setEmails(current => [...current, result.email])
@@ -3165,14 +3178,17 @@ function EmailTab() {
   }
 
   async function handleCompose() {
+    if (sending || !compose.to.trim() || !compose.subject.trim() || !compose.message.trim()) return
     setSending(true); setSendError('')
+    setSendNotice('')
     try {
-      const result = await callFunction('send-email-reply', { ...compose, ...senderDetails })
-      if (result.preview) setSendError('Email preview saved. Nothing was sent. Refresh email previews above to view it.')
-      if (result.queued) setSendError('Email queued for background delivery. Check email status above.')
+      const result = await callFunction('send-email-reply', { ...compose, to: compose.to.trim(), ...senderDetails })
+      setSendNotice(result.preview ? 'Email preview saved. Nothing was sent. Refresh email previews above to view it.' : result.queued ? 'Email queued for background delivery. Check email status above.' : 'Email sent successfully.')
       setCompose({ to: '', subject: '', message: '' })
       setComposing(false)
       setViewFilter('sent')
+      setSelectedThreadId(result.email?.thread_id || null)
+      if (result.email) setMessageNavigation(current => current + 1)
       await fetchEmails()
     } catch (err) { setSendError(err.message) }
     setSending(false)
@@ -3243,6 +3259,8 @@ function EmailTab() {
         </div>
       </div>
       {error && <p style={{ color: 'red', marginBottom: '1rem' }}>Error: {error}</p>}
+      {sendNotice && <p role="status" style={{ color: '#365665', marginBottom: '1rem' }}>{sendNotice}</p>}
+      {sendError && !composing && !selectedThread && <p role="alert" style={{ color: '#b91c1c', marginBottom: '1rem' }}>{sendError}</p>}
       {composing && <div style={{ border: '1px solid #ddd', borderRadius: 10, padding: 16, marginBottom: 16, background: '#fff', display: 'grid', gap: 10 }}>
         <strong>New message</strong>
         <label>From<select style={inputStyle} value={sender} onChange={e => setSender(e.target.value)}>{senderOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
@@ -3291,7 +3309,7 @@ function EmailTab() {
         </div>
 
         {selectedThread && (
-          <div style={{ flex: '2 1 400px', minWidth: 0, width: '100%', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem', overflowWrap: 'anywhere' }}>
+          <div ref={threadPanelRef} tabIndex={-1} role="region" aria-label="Selected email conversation" style={{ flex: '2 1 400px', minWidth: 0, width: '100%', border: '1px solid #ddd', borderRadius: '10px', padding: '1rem', overflowWrap: 'anywhere', scrollMarginTop: '100px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <h5 style={{ fontWeight: 600, fontSize: '0.95rem', margin: 0 }}>Thread Messages</h5>
               <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -3492,7 +3510,7 @@ function AdminDashboard() {
   const [settingsInitialView, setSettingsInitialView] = useState('tools')
   const [emailView, setEmailView] = useState('inbox')
   const [bornNotice, setBornNotice] = useState(null)
-  const tabs = ['puppies', 'litters', 'dogs', 'waitlist', 'payments', 'applications', 'users', 'files', 'email', 'settings']
+  const tabs = ['puppies', 'owner updates', 'litters', 'dogs', 'waitlist', 'payments', 'applications', 'users', 'files', 'email', 'settings']
 
   return (
     <div>
@@ -3507,6 +3525,7 @@ function AdminDashboard() {
         ))}
       </div>
       {tab === 'puppies' && <PuppiesTab />}
+      {tab === 'owner updates' && <PuppyUpdates admin />}
       {tab === 'email' && import.meta.env.VITE_DATA_API_URL && <RailwayEmailPreviews />}
       {tab === 'litters' && <LittersTab onBorn={notice => { setBornNotice(notice); setEmailView('campaigns'); setTab('email') }} />}
       {tab === 'dogs' && <DogsTab />}

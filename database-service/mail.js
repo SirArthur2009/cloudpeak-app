@@ -4,6 +4,20 @@ export const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, chara
 export const validEmail = value => typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 export function fail(message, status = 400) { throw Object.assign(new Error(message), { status }) }
 
+export function brandEmail(html) {
+  return `<!doctype html><html><body style="margin:0;background:#f6f7f8;color:#26333a;font-family:Arial,sans-serif"><table role="presentation" width="100%" cellspacing="0" cellpadding="0"><tr><td style="padding:24px 12px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;margin:auto;background:#fff;border-top:3px solid #597987"><tr><td style="padding:20px 28px;border-bottom:1px solid #e8edef;font-size:15px;font-weight:bold;letter-spacing:1px">CLOUD PEAK <span style="font-weight:normal;color:#657780">Silver Labradors</span></td></tr><tr><td style="padding:24px 28px;font-size:15px;line-height:1.65">${html}</td></tr><tr><td style="padding:18px 28px;border-top:1px solid #e8edef;font-size:12px;color:#657780"><a href="https://cloudpeaksilverlabradors.com" style="color:#597987">Cloud Peak Silver Labradors</a></td></tr></table></td></tr></table></body></html>`
+}
+
+export function formatApplication(application) {
+  const fields = Object.entries(application).filter(([key]) => !['id', 'created_at', 'status'].includes(key))
+  const label = key => key.replace(/_/g, ' ').replace(/\b\w/g, letter => letter.toUpperCase())
+  const value = item => item == null || item === '' ? 'Not provided' : typeof item === 'boolean' ? (item ? 'Yes' : 'No') : Array.isArray(item) ? item.join(', ') : typeof item === 'object' ? JSON.stringify(item) : String(item)
+  return {
+    text: `New puppy application\n\n${fields.map(([key, item]) => `${label(key)}: ${value(item)}`).join('\n\n')}`,
+    html: `<h2 style="margin-top:0">New puppy application</h2><table width="100%" cellspacing="0" cellpadding="0">${fields.map(([key, item]) => `<tr><td style="padding:12px 0;border-bottom:1px solid #e8edef"><div style="font-size:12px;font-weight:bold;color:#657780;margin-bottom:4px">${escapeHtml(label(key))}</div><div style="white-space:pre-wrap;overflow-wrap:anywhere">${escapeHtml(value(item))}</div></td></tr>`).join('')}</table>`,
+  }
+}
+
 export function createMailer({ pool, env, fetchImpl = fetch }) {
   const mode = env.EMAIL_MODE || 'preview'
   if (!['preview', 'live'].includes(mode)) throw new Error('EMAIL_MODE must be preview or live.')

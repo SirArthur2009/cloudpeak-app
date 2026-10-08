@@ -152,6 +152,31 @@ test('campaigns deduplicate recipients and preview without calling Resend; repli
   await assert.rejects(actions.invoke('send-waitlist-campaign', { audience: "litter:1 OR true", subject: 'X', message: 'Y' }, adminContext), error => error.status === 400)
 }))
 
+test('compose delivers the selected sender, recipient, formatting and reply address and saves a sent conversation', async () => fixture(async pool => {
+  const env = { ...previewEnv, EMAIL_MODE: 'live', RESEND_API_KEY: 'fake', FORWARD_TO_EMAIL: 'copies@example.invalid' }
+  let delivered
+  const providerId = `compose_${randomUUID()}`
+  const mail = createMailer({ pool, env, fetchImpl: async (_url, request) => {
+    delivered = JSON.parse(request.body)
+    return Response.json({ id: providerId })
+  } })
+  const actions = createActions({ pool, env, mail, fetchImpl: forbiddenNetwork })
+  const result = await actions.invoke('send-email-reply', {
+    sender: 'leah', to: 'recipient@example.invalid', subject: 'Compose delivery test',
+    message: 'Hello **family**\n\n[Visit us](https://cloudpeaksilverlabradors.com)', reply_to: 'replies@example.invalid',
+  }, adminContext)
+  assert.equal(delivered.from, 'Leah at Cloud Peak <leah@cloudpeaksilverlabradors.com>')
+  assert.equal(delivered.to, 'recipient@example.invalid')
+  assert.equal(delivered.reply_to, 'replies@example.invalid')
+  assert.equal(delivered.bcc, 'copies@example.invalid')
+  assert.ok(delivered.html.includes('<strong>family</strong>'))
+  assert.ok(delivered.html.includes('CLOUD PEAK'))
+  assert.equal(result.email.resend_id, providerId)
+  assert.equal(result.email.direction, 'outbound')
+  assert.ok(result.email.thread_id)
+  assert.equal(result.email.html_body, delivered.html)
+}))
+
 test('public application notices only use stored recent records and deduplicate mail jobs', async () => fixture(async pool => {
   const email = `${randomUUID()}@example.invalid`
   await pool.query("INSERT INTO public.applications(first_name,last_name,email,status) VALUES('Test','Applicant',$1,'new')", [email])
@@ -163,6 +188,10 @@ test('public application notices only use stored recent records and deduplicate 
   await actions.invoke('notify-application', payload, context)
   const rows = (await pool.query("SELECT payload FROM cloudpeak_internal.email_outbox WHERE payload->>'subject'='New puppy application — Test Applicant'")).rows
   assert.equal(rows.length, 1)
+  assert.equal(rows[0].payload.to, 'cloudpeaksilverlabs@yahoo.com')
+  assert.ok(rows[0].payload.html.includes('CLOUD PEAK'))
+  assert.ok(rows[0].payload.html.includes('First Name'))
+  assert.ok(!rows[0].payload.html.includes('<pre>'))
   assert.ok(!JSON.stringify(rows).includes('FORGED CONTENT'))
   await assert.rejects(actions.invoke('notify-application', { ...payload, email: 'missing@example.invalid' }, context), error => error.status === 404)
 }))

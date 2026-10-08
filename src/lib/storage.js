@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 
 const base = import.meta.env.VITE_STORAGE_API_URL ? new URL(import.meta.env.VITE_STORAGE_API_URL, window.location.origin).href.replace(/\/$/, '') : ''
+if (import.meta.env.VITE_AUTH_PROVIDER === 'better-auth' && !base) throw new Error('Better Auth requires Railway VITE_STORAGE_API_URL.')
 export const railwayStorageEnabled = Boolean(base)
 const encoded = path => path.split('/').map(encodeURIComponent).join('/')
 

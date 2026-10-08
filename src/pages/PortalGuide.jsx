@@ -67,7 +67,15 @@ export default function PortalGuide() {
       </div>
 
       <div style={sectionStyle}>
-        <h3 style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '0.75rem' }}>5. Sign out</h3>
+        <h3 style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '0.75rem' }}>5. Share updates about your puppy</h3>
+        <p style={{ color: '#555', lineHeight: 1.6, margin: 0 }}>
+          Your puppy moves from Available to Reserved after your selection is approved, then to Sold when the sale is complete.
+          Open “My Puppy” once your puppy is sold to upload photos or request a new name. Photos stay private until the Cloud Peak team chooses to publish them, and your puppy’s current name stays live until a name change is approved.
+        </p>
+      </div>
+
+      <div style={sectionStyle}>
+        <h3 style={{ fontWeight: 600, fontSize: '1.1rem', marginBottom: '0.75rem' }}>6. Sign out</h3>
         <p style={{ color: '#555', lineHeight: 1.6, margin: 0 }}>
           Use the “Sign out” button in the top-right corner when you’re finished. You can sign back in anytime with your account information.
         </p>

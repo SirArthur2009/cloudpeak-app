@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { transaction, listAuthUsers, syncVerifiedProfile } from './backend-db.js'
-import { escapeHtml as esc, validEmail, fail } from './mail.js'
+import { escapeHtml as esc, validEmail, fail, brandEmail, formatApplication } from './mail.js'
 import { renderCampaignMarkdown } from '../supabase/functions/_shared/campaignMarkdown.js'
 
 const senders = {
@@ -28,12 +28,19 @@ export function verifyWebhook(raw, headers, secret, now = Date.now()) {
 }
 
 export function createActions({ pool, authAdmin, mail, env, fetchImpl = fetch }) {
+  // Brand authored outbound messages; preserve incoming forwarded content.
+  const rawMail = mail
+  mail = { ...rawMail,
+    send: (payload, key) => rawMail.send({ ...payload, html: brandEmail(payload.html || `<p>${esc(payload.text || '')}</p>`) }, key),
+    enqueue: (payload, key) => rawMail.enqueue({ ...payload, html: brandEmail(payload.html || `<p>${esc(payload.text || '')}</p>`) }, key),
+    enqueueMany: payloads => rawMail.enqueueMany(payloads.map(payload => ({ ...payload, html: brandEmail(payload.html || '') }))),
+  }
   function adminRequired(context) {
     if (!context.user) fail('Sign in first.', 401)
     if (context.role !== 'cloudpeak_admin') fail('Admin access required.', 403)
   }
   function authWritesAllowed(email) {
-    if (env.AUTH_WRITES_ENABLED !== 'true') fail('Account and password changes are blocked in local testing because they affect real Supabase accounts.', 409)
+    if (env.AUTH_WRITES_ENABLED !== 'true') fail('Account and password changes are blocked in local testing because they affect real accounts.', 409)
     if (!authAdmin) fail('Server-side Auth credentials are not configured.', 503)
     if (env.AUTH_ALLOWED_EMAILS && !env.AUTH_ALLOWED_EMAILS.split(',').map(value => value.trim().toLowerCase()).includes(String(email || '').toLowerCase())) fail('Hosted verification only permits the approved disposable account.', 409)
   }
@@ -64,10 +71,9 @@ export function createActions({ pool, authAdmin, mail, env, fetchImpl = fetch })
     return rows.map(row => row.email).filter(validEmail)
   }
   async function notify(application) {
-    const recipients = await adminEmails()
-    if (!recipients.length) fail('No admin recipients are configured.', 503)
-    const text = Object.entries(application).filter(([key]) => !['id', 'created_at', 'status'].includes(key)).map(([key, value]) => `${key}: ${value ?? ''}`).join('\n')
-    const html = `<h2>New puppy application</h2><pre>${esc(text)}</pre>`
+    const recipients = [...new Set((env.APPLICATION_EMAILS || 'cloudpeaksilverlabs@yahoo.com').split(',').map(value => value.trim().toLowerCase()).filter(Boolean))]
+    if (!recipients.length || !recipients.every(validEmail)) fail('Application email configuration is invalid.', 503)
+    const { text, html } = formatApplication(application)
     const results = []
     for (const to of recipients) results.push(await (mail.mode === 'live' ? mail.enqueue : mail.send)({ from: sender({}), to, subject: `New puppy application — ${application.first_name || ''} ${application.last_name || ''}`.slice(0, 300), text, html }, `application/${application.id}/${to.toLowerCase()}`))
     return { ok: true, preview: mail.mode === 'preview', sent_to: mail.mode === 'live' ? recipients : [], preview_count: results.filter(result => result.preview).length }
@@ -104,7 +110,7 @@ export function createActions({ pool, authAdmin, mail, env, fetchImpl = fetch })
       if (typeof body.must_change_password === 'boolean' || body.password) appMetadata.must_change_password = body.must_change_password ?? true
       const payload = { user_metadata: metadata, app_metadata: appMetadata, ...(body.password ? { password: body.password } : {}) }
       const result = existing ? await authAdmin.updateUserById(existing.id, payload) : await authAdmin.createUser({ ...payload, email, email_confirm: true })
-      if (result.error) fail('Supabase could not save this account.', 502)
+      if (result.error) fail('The authentication service could not save this account.', 502)
       const user = result.data.user
       const assignedRole = body.role || (existing ? (await pool.query('SELECT role FROM public.profiles WHERE id=$1', [user.id])).rows[0]?.role : 'client') || 'client'
       await syncVerifiedProfile(pool, user)
@@ -115,7 +121,7 @@ export function createActions({ pool, authAdmin, mail, env, fetchImpl = fetch })
       authWritesAllowed(context.user.email)
       if (typeof body.password !== 'string' || body.password.length < 8) fail('Password must be at least 8 characters.')
       const result = await authAdmin.updateUserById(context.user.id, { password: body.password, app_metadata: { ...context.user.app_metadata, must_change_password: false } })
-      if (result.error) fail('Supabase could not change your password.', 502)
+      if (result.error) fail('The authentication service could not change your password.', 502)
       return { ok: true }
     }
     if (name === 'delete-client-user') {
@@ -167,7 +173,7 @@ export function createActions({ pool, authAdmin, mail, env, fetchImpl = fetch })
       if (env.EMAIL_ALLOWED_RECIPIENTS && !env.EMAIL_ALLOWED_RECIPIENTS.split(',').map(value => value.trim().toLowerCase()).includes(email)) fail('Hosted verification only permits the approved test recipient.', 409)
       authWritesAllowed(email)
       if (typeof body.password !== 'string' || body.password.length < 8) fail('Temporary password is required.')
-      const html = `<h2>Hi ${esc(body.clientName || 'there')}!</h2><p>Login email: ${esc(email)}</p><p>Temporary password: ${esc(body.password)}</p><p>Choose a new password when you sign in.</p><a href="${esc(url)}">Open portal</a>`
+      const html = brandEmail(`<h2>Hi ${esc(body.clientName || 'there')}!</h2><p>Login email: ${esc(email)}</p><p>Temporary password: ${esc(body.password)}</p><p>Choose a new password when you sign in.</p><a href="${esc(url)}">Open portal</a>`)
       // Password-containing mail is sent directly and never persisted in email history/outbox.
       const key = env.RESEND_EMAIL_API_KEY || env.RESEND_API_KEY
       if (!key) fail('Email delivery is not configured.', 503)

@@ -118,7 +118,7 @@ export default function Waitlist() {
 
       if (selectedId) {
         const [waitlistResult, puppiesResult] = await Promise.all([
-          supabase.from('waitlist').select('*, puppies(name, color, gender)').eq('litter_id', selectedId).order('position'),
+          supabase.from('waitlist').select('*, puppies(name, color, gender, status)').eq('litter_id', selectedId).order('position'),
           supabase.from('puppies').select('*, litters(name)').eq('status', 'available').eq('litter_id', selectedId).order('id')
         ])
         setWaitlist(waitlistResult.data || [])
@@ -151,7 +151,7 @@ export default function Waitlist() {
     setConfirmed(false)
 
     const [waitlistResult, puppiesResult] = await Promise.all([
-      supabase.from('waitlist').select('*, puppies(name, color, gender)').eq('litter_id', litterId).order('position'),
+      supabase.from('waitlist').select('*, puppies(name, color, gender, status)').eq('litter_id', litterId).order('position'),
       supabase.from('puppies').select('*, litters(name)').eq('status', 'available').eq('litter_id', litterId).order('id')
     ])
     setWaitlist(waitlistResult.data || [])
@@ -309,7 +309,7 @@ export default function Waitlist() {
                   <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem 0.6rem', borderRadius: '20px', background: '#fff4e5', color: '#b36200' }}>Pending approval</span>
                 )}
                 {isReserved && (
-                  <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem 0.6rem', borderRadius: '20px', background: '#e6f4ea', color: '#2d7a3a' }}>Reserved</span>
+                  <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '0.2rem 0.6rem', borderRadius: '20px', background: '#e6f4ea', color: '#2d7a3a' }}>{person.puppies?.status === 'sold' ? 'Sold' : 'Reserved'}</span>
                 )}
               </div>
             </div>

@@ -11,7 +11,7 @@ for (const name of ['APP_ORIGIN','WEBSITE_ORIGIN']) {
 }
 const env = hostedRuntimeConfig(process.env)
 const children = [spawn(process.execPath, ['database-service/server.js'], { cwd: root, stdio: 'inherit', env }), spawn(process.execPath, ['storage-service/server.js'], { cwd: root, stdio: 'inherit', env: { ...env, PORT: '3005', DATA_API_URL: 'http://127.0.0.1:3002' } })]
-const gateway = createGateway({ appOrigin: env.APP_ORIGIN, websiteOrigin: env.WEBSITE_ORIGIN, appAliases: (env.APP_ALIASES || '').split(',').filter(Boolean), websiteAliases: (env.WEBSITE_ALIASES || '').split(',').filter(Boolean), appRoot: resolve(root, 'public/app'), websiteRoot: resolve(root, 'public/website'), dataUrl: 'http://127.0.0.1:3002', storageUrl: 'http://127.0.0.1:3005', supabaseUrl: env.SUPABASE_URL })
+const gateway = createGateway({ appOrigin: env.APP_ORIGIN, websiteOrigin: env.WEBSITE_ORIGIN, appAliases: (env.APP_ALIASES || '').split(',').filter(Boolean), websiteAliases: (env.WEBSITE_ALIASES || '').split(',').filter(Boolean), appRoot: resolve(root, 'public/app'), websiteRoot: resolve(root, 'public/website'), dataUrl: 'http://127.0.0.1:3002', storageUrl: 'http://127.0.0.1:3005', supabaseUrl: env.SUPABASE_URL, trustRailwayProxy: true })
 gateway.listen(Number(env.PORT || 8080), '0.0.0.0', () => console.log(`Hosted gateway started; email ${env.EMAIL_MODE}; Auth writes ${env.AUTH_WRITES_ENABLED}.`))
 let stopping = false
 function stop(code = 0) { if (stopping) return; stopping = true; gateway.close(); for (const child of children) child.kill(); process.exitCode = code }

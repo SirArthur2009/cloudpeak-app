@@ -47,6 +47,7 @@ jobs:
         working-directory: cloudpeak-app
         env:
           HOSTED_BUILD_MODE: live
+          AUTH_PROVIDER: better-auth
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
         run: npm run prepare:railway

@@ -7,6 +7,49 @@ import { createGateway } from './gateway.mjs'
 import { request as httpRequest } from 'node:http'
 import { createServer } from 'node:http'
 
+test('Railway auth uses the edge client address and overwrites caller auth-IP headers', async t => {
+  let headers
+  const server = createGateway({ appOrigin: 'https://app.example', websiteOrigin: 'https://web.example', appRoot: '.', websiteRoot: '.', dataUrl: 'http://data.internal', storageUrl: 'http://storage.internal', supabaseUrl: 'https://auth.example', trustRailwayProxy: true,
+    fetchImpl: async (_url, init) => { headers = init.headers; return new Response('{}', { headers: { 'content-type': 'application/json' } }) },
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  await new Promise((resolve, reject) => {
+    const req = httpRequest(`http://127.0.0.1:${server.address().port}/railway-api/api/auth/get-session`, { headers: { host: 'app.example', 'x-real-ip': '198.51.100.20', 'x-cloudpeak-client-ip': '198.51.100.10', 'x-forwarded-for': '198.51.100.30' } }, res => { res.resume(); res.on('end', resolve) })
+    req.on('error', reject); req.end()
+  })
+  assert.equal(headers['x-cloudpeak-client-ip'], '198.51.100.20')
+  assert.equal(headers['x-forwarded-for'], undefined)
+})
+
+test('auth proxy forwards bearer tokens, cookies and token response headers', async t => {
+  let forwarded
+  const server = createGateway({ appOrigin: 'https://app.example', websiteOrigin: 'https://web.example', appRoot: '.', websiteRoot: '.', dataUrl: 'http://data.internal', storageUrl: 'http://storage.internal', supabaseUrl: 'https://auth.example',
+    fetchImpl: async (url, init) => {
+      forwarded = { url, headers: init.headers }
+      const headers = new Headers({ 'content-type': 'application/json', 'set-auth-token': 'test-signed-token' })
+      headers.append('set-cookie', 'session=one; HttpOnly; Secure; Path=/')
+      headers.append('set-cookie', 'session_data=two; HttpOnly; Secure; Path=/')
+      return new Response('{}', { headers })
+    },
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  await new Promise((resolve, reject) => {
+    const req = httpRequest(`http://127.0.0.1:${server.address().port}/railway-api/api/auth/get-session`, { headers: { host: 'app.example', authorization: 'Bearer test-token', cookie: 'session=one', 'x-cloudpeak-client-ip': '198.51.100.10', 'x-real-ip': '198.51.100.20' } }, res => {
+      assert.equal(res.statusCode, 200)
+      assert.equal(res.headers['set-auth-token'], 'test-signed-token')
+      assert.equal(res.headers['set-cookie'].length, 2)
+      res.resume(); res.on('end', resolve)
+    })
+    req.on('error', reject); req.end()
+  })
+  assert.equal(forwarded.url, 'http://data.internal/api/auth/get-session')
+  assert.equal(forwarded.headers.authorization, 'Bearer test-token')
+  assert.equal(forwarded.headers.cookie, 'session=one')
+  assert.equal(forwarded.headers['x-cloudpeak-client-ip'], '127.0.0.1')
+})
+
 test('upload and response timeouts leave the gateway available', async t => {
   const upstream = createServer((req, res) => {
     req.resume()
@@ -113,5 +156,5 @@ test('host routing, SPA refresh, traversal denial and Railway proxy behavior', a
   assert.equal(redirect.status,302); assert.equal(redirect.headers.get('location'),'https://bucket.example/signed')
   const health = await request('/health','railway-healthcheck')
   assert.equal(health.status,200)
-  assert.deepEqual(await health.json(), {ok:true,emailMode:'preview',authWrites:false,releaseMode:'test',actionsRestricted:true})
+  assert.deepEqual(await health.json(), {ok:true,auth:null,emailMode:'preview',authWrites:false,releaseMode:'test',actionsRestricted:true})
 })

@@ -15,7 +15,7 @@ for (let attempt = 0; attempt < 36; attempt++) {
     try {
       const release = await fetch(`${origin}/release.json?t=${Date.now()}`, { signal: AbortSignal.timeout(10000) }).then(r => r.json())
       const health = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(10000) }).then(r => r.json())
-      return release.appSha === expected.appSha && release.websiteSha === expected.websiteSha && health.ok && health.releaseMode === 'live'
+      return release.appSha === expected.appSha && release.websiteSha === expected.websiteSha && release.buildId === expected.buildId && release.authProvider === expected.authProvider && health.ok && health.releaseMode === 'live' && health.auth === 'Better Auth'
     } catch { return false }
   }))
   if (checks.every(Boolean)) { console.log('Both live domains verified at the deployed revisions.'); process.exit(0) }

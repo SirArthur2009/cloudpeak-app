@@ -10,6 +10,14 @@ Use `npm run dev:railway` to run the app and website against the isolated Railwa
 
 Use `npm run prepare:railway` to generate a credential-free bundle for a hosted Railway test of both sites. See [hosted deployment instructions](deployment/README.md) for local bundle preview, server variables, test domains and the deployment sequence. This command prepares files locally and does not publish them.
 
+## Puppy owner updates
+
+Approve a family's puppy selection in Admin → Waitlist to reserve it, then mark the reserved puppy Sold in Admin → Puppies when the sale is complete. Sold puppies require an approved selection with a family email. The family signs into that email's account and opens My Puppy to submit photos or a new name. Admin → Owner updates reviews pending submissions, publishes individual photos, declines requests, and hides or republishes previously reviewed photos. Names only change on approval; photo approval adds a regular gallery entry used by both the portal and public website. Hiding removes that gallery entry; previously published image URLs may still be accessible.
+
+For Supabase data/storage, apply `supabase/migrations/20261006021648_puppy_owner_updates.sql` before releasing the frontend. It creates the review table, permissions, review/status triggers, and private `owner-puppy-photos` bucket. For Railway data, `installBackend` installs `database-service/owner-updates.sql` at backend startup. Deploy the updated Railway storage signer alongside the app to enable verified owner uploads to the private prefix. Owner originals stay private; admin-approved copies go into `puppy-photos`. Supabase Auth remains the login provider in both configurations.
+
+Run `npm run test:owner-updates` for transaction-rolled-back database checks using the configured Railway copy, and `npm run test:storage` for storage access checks without external mutations. The new migration and application code are prepared locally; running these checks does not release the feature.
+
 ## React + Vite
 
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
@@ -26,3 +34,6 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the ESLint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+# Better Auth migration
+
+See [the migration guide](database-service/BETTER-AUTH-MIGRATION.md) for importing existing password hashes and configuring Better Auth. Run `npm run dev:railway` to start the complete local Railway data, auth, storage, and frontend stack. The frontend and server Auth provider settings must match.

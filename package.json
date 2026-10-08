@@ -4,6 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "test:auth": "node --test database-service/better-auth.test.js",
+    "test:auth:postgres": "node --test database-service/better-auth-postgres.test.js",
     "dev": "vite",
     "dev:storage": "node scripts/dev-storage.mjs",
     "dev:all": "node scripts/dev-storage.mjs --website --without-storage",
@@ -14,6 +16,7 @@
     "test:deployment": "node --test deployment/gateway.test.mjs deployment/runtime-config.test.mjs",
     "preview:deployment": "node deployment/preview.mjs",
     "test:railway": "node --test database-service/backend.test.js scripts/puppy-display.test.mjs",
+    "test:owner-updates": "node --test database-service/owner-updates.test.js",
     "test:storage": "node --test storage-service/*.test.js",
     "storage:setup": "node scripts/setup-storage.mjs",
     "build": "vite build",
@@ -22,6 +25,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.3",
+    "better-auth": "1.7.7",
     "dompurify": "^3.4.14",
     "heic2any": "0.0.4",
     "jszip": "3.10.1",

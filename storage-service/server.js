@@ -11,7 +11,15 @@ export function createStorageServer(env = process.env) {
   const { s3, bucket: Bucket, auth, supabaseUrl, anonKey } = clients(env)
   const handler = createStorageHandler({
     origins: new Set((env.ALLOWED_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean)),
-    async getUser(token) { const { data, error } = await auth.auth.getUser(token); return error ? null : data.user },
+    async getUser(token) {
+      if (env.AUTH_PROVIDER === 'better-auth') {
+        if (!env.DATA_API_URL) throw new Error('Better Auth storage requires DATA_API_URL.')
+        const response = await fetch(`${env.DATA_API_URL.replace(/\/$/, '')}/auth-user`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) })
+        return response.ok ? (await response.json()).user : null
+      }
+      const { data, error } = await auth.auth.getUser(token)
+      return error ? null : data.user
+    },
     async getRole(token, id) {
       if (env.DATA_API_URL) {
         const response = await fetch(`${env.DATA_API_URL.replace(/\/$/, '')}/rest/v1/profiles?select=role&id=eq.${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -22,6 +30,17 @@ export function createStorageServer(env = process.env) {
       const user = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } })
       const { data, error } = await user.from('profiles').select('role').eq('id', id).single()
       return error ? null : data?.role
+    },
+    async ownsSoldPuppy(token, user, puppyId) {
+      if (env.DATA_API_URL) {
+        const query = new URLSearchParams({ select: 'id,email,puppies(status)', selected_puppy_id: `eq.${puppyId}`, pending_approval: 'not.is.true' })
+        const response = await fetch(`${env.DATA_API_URL.replace(/\/$/, '')}/rest/v1/waitlist?${query}`, { headers: { Authorization: `Bearer ${token}` } })
+        if (!response.ok) return false
+        return (await response.json()).some(row => row.puppies?.status === 'sold' && row.email?.toLowerCase() === user.email?.toLowerCase())
+      }
+      const client = createClient(supabaseUrl, anonKey, { global: { headers: { Authorization: `Bearer ${token}` } }, auth: { persistSession: false } })
+      const { data, error } = await client.from('waitlist').select('id,email,puppies(status)').eq('selected_puppy_id', puppyId).not('pending_approval', 'is', true)
+      return !error && data?.some(row => row.puppies?.status === 'sold' && row.email?.toLowerCase() === user.email?.toLowerCase())
     },
     readUrl: (Key, expiresIn) => getSignedUrl(s3, new GetObjectCommand({ Bucket, Key }), { expiresIn }),
     uploadUrl: (Key, ContentType, ContentLength) => getSignedUrl(s3, new PutObjectCommand({ Bucket, Key, ContentType, ContentLength, IfNoneMatch: '*' }), { expiresIn: 600 }),

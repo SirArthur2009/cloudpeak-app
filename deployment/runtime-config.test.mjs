@@ -1,6 +1,14 @@
 import {test} from 'node:test'
 import assert from 'node:assert/strict'
 import {hostedRuntimeConfig} from './runtime-config.mjs'
+test('Better Auth releases validate public auth routing and use their own secret',()=>{
+  const input={APP_ORIGIN:'https://app.example',WEBSITE_ORIGIN:'https://site.example',AUTH_PROVIDER:'better-auth',BETTER_AUTH_SECRET:'test-secret-at-least-32-characters-long',BETTER_AUTH_URL:'https://app.example/railway-api/api/auth'}
+  assert.equal(hostedRuntimeConfig(input).AUTH_PROVIDER,'better-auth')
+  assert.throws(()=>hostedRuntimeConfig({...input,BETTER_AUTH_SECRET:''}),/secret/)
+  assert.throws(()=>hostedRuntimeConfig({...input,BETTER_AUTH_URL:'https://app.example/railway-api'}),/auth URL/)
+  const live=hostedRuntimeConfig({...input,HOSTED_MODE:'live',LIVE_ACTIONS_APPROVED:'true',RESEND_API_KEY:'fake',RESEND_WEBHOOK_SECRET:'fake'})
+  assert.equal(live.AUTH_WRITES_ENABLED,'true')
+})
 test('hosted test overrides live flags; release fails closed without approval and required credentials',()=>{
   const input={APP_ORIGIN:'https://app.example',WEBSITE_ORIGIN:'https://site.example',EMAIL_MODE:'live',AUTH_WRITES_ENABLED:'true'}
   const test=hostedRuntimeConfig(input)

@@ -15,6 +15,8 @@ const anon = process.env.SUPABASE_ANON_KEY || local.VITE_SUPABASE_ANON_KEY
 if (!url || !anon) throw new Error('Supabase public URL and anonymous key are required.')
 Object.assign(process.env, { VITE_SUPABASE_URL: url, VITE_SUPABASE_ANON_KEY: anon, VITE_SUPABASE_SERVICE_KEY: '', VITE_DATA_API_URL: '/railway-api', VITE_STORAGE_API_URL: '/railway-storage/functions/v1/storage-files', VITE_SUPABASE_FUNCTIONS_URL: '/railway-api/functions/v1', VITE_PORTAL_URL: '' })
 process.env.VITE_RELEASE_MODE = process.env.HOSTED_BUILD_MODE || 'test'
+process.env.VITE_AUTH_PROVIDER = process.env.AUTH_PROVIDER || 'supabase'
+process.env.VITE_BETTER_AUTH_URL = '/railway-api/api/auth'
 if (!['test','staging','live'].includes(process.env.VITE_RELEASE_MODE)) throw new Error('Invalid hosted build mode.')
 await mkdir(bundle, { recursive: true })
 await build({ root, mode: 'railway-hosted-test', build: { outDir: resolve(bundle, 'public/app'), emptyOutDir: true } })
@@ -28,10 +30,11 @@ for (const entry of await readdir(sourceWebsite, { withFileTypes: true })) {
   }
 }
 for (const directory of ['assets','css','js']) await cp(join(sourceWebsite, directory), join(website, directory), { recursive: true, filter: path => !path.split(/[\\/]/).some(part => part.startsWith('.')) })
-const release = { appSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), websiteSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceWebsite, encoding: 'utf8' }).trim() }
+for (const name of ['sitemap.xml', 'robots.txt']) await cp(join(sourceWebsite, 'public', name), join(website, name))
+const release = { appSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(), websiteSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: sourceWebsite, encoding: 'utf8' }).trim(), buildId: new Date().toISOString(), authProvider: process.env.VITE_AUTH_PROVIDER }
 for (const directory of [resolve(bundle, 'public/app'), website]) await writeFile(join(directory, 'release.json'), JSON.stringify(release))
 const files = {
-  'database-service': ['server.js','settings.js','backend-db.js','backend-schema.sql','actions.js','mail.js','database-ca.pem','package.json','package-lock.json','test-authorized-account.js','send-delivery-test.js'],
+  'database-service': ['server.js','settings.js','backend-db.js','backend-schema.sql','owner-updates.sql','better-auth.js','actions.js','mail.js','database-ca.pem','package.json','package-lock.json','test-authorized-account.js','send-delivery-test.js'],
   'storage-service': ['server.js','clients.js','package.json','package-lock.json'],
   'supabase/functions/storage-files': ['handler.js','policy.js'],
   'supabase/functions/_shared': ['campaignMarkdown.js'],
@@ -48,7 +51,7 @@ async function scan(directory) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) await scan(path)
     else {
-      if (entry.name === '.env' || entry.name.startsWith('.env.') || /snapshot|report|\.sql$/.test(entry.name) && !path.endsWith('backend-schema.sql')) throw new Error('Unexpected private file in bundle.')
+      if (entry.name === '.env' || entry.name.startsWith('.env.') || /snapshot|report|\.sql$/.test(entry.name) && !path.endsWith('backend-schema.sql') && !path.endsWith('owner-updates.sql')) throw new Error('Unexpected private file in bundle.')
       const contents = await readFile(path)
       if ([local.VITE_SUPABASE_SERVICE_KEY, local.SUPABASE_SERVICE_ROLE_KEY, local.RESEND_API_KEY].some(key => key && contents.includes(Buffer.from(key)))) throw new Error('Privileged key found in bundle.')
     }

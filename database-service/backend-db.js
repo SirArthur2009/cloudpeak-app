@@ -14,10 +14,18 @@ export async function transaction(pool, work) {
 }
 
 export async function installBackend(pool) {
-  await transaction(pool, client => client.query(readFileSync(new URL('./backend-schema.sql', import.meta.url), 'utf8')))
+  await transaction(pool, async client => {
+    await client.query(readFileSync(new URL('./backend-schema.sql', import.meta.url), 'utf8'))
+    await client.query(railwayOwnerSchema())
+  })
 }
 
-// Only call with the user returned by Supabase getUser, never browser claims.
+export function railwayOwnerSchema() {
+  return readFileSync(new URL('./owner-updates.sql', import.meta.url), 'utf8')
+    .replace(/\banon\b/g, 'cloudpeak_anon').replace(/\bauthenticated\b/g, 'cloudpeak_user, cloudpeak_admin')
+}
+
+// Only call with a server-verified Auth user, never browser claims.
 // User-editable metadata cannot assign roles. Existing Railway roles are preserved.
 export async function syncVerifiedProfile(pool, user) {
   return transaction(pool, async client => {

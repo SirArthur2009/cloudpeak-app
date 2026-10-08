@@ -1,9 +1,14 @@
 export function hostedRuntimeConfig(input) {
+  if (input.AUTH_PROVIDER && !['supabase','better-auth'].includes(input.AUTH_PROVIDER)) throw new Error('Invalid AUTH_PROVIDER.')
+  if (input.AUTH_PROVIDER === 'better-auth') {
+    if (!input.BETTER_AUTH_SECRET || input.BETTER_AUTH_SECRET.length < 32) throw new Error('Better Auth requires a server-only secret of at least 32 characters.')
+    if (!input.BETTER_AUTH_URL || new URL(input.BETTER_AUTH_URL).href !== `${input.APP_ORIGIN}/railway-api/api/auth`) throw new Error('BETTER_AUTH_URL must match the full public portal auth URL.')
+  }
   const mode=input.HOSTED_MODE || 'test'
   if (!['test','staging','live'].includes(mode)) throw new Error('HOSTED_MODE must be test, staging or live.')
   if (mode!=='test') {
     if (input.LIVE_ACTIONS_APPROVED!=='true') throw new Error('Live actions require explicit release approval.')
-    for (const name of ['SUPABASE_SERVICE_ROLE_KEY','RESEND_API_KEY','RESEND_WEBHOOK_SECRET']) {
+    for (const name of [input.AUTH_PROVIDER === 'better-auth' ? 'BETTER_AUTH_SECRET' : 'SUPABASE_SERVICE_ROLE_KEY','RESEND_API_KEY','RESEND_WEBHOOK_SECRET']) {
       if (name==='RESEND_API_KEY' && input.RESEND_EMAIL_API_KEY) continue
       if (!input[name]) throw new Error(`Live configuration is missing ${name}.`)
     }
