@@ -158,3 +158,69 @@ test('host routing, SPA refresh, traversal denial and Railway proxy behavior', a
   assert.equal(health.status,200)
   assert.deepEqual(await health.json(), {ok:true,auth:null,emailMode:'preview',authWrites:false,releaseMode:'test',actionsRestricted:true})
 })
+
+test('website sitemap includes current litter and puppy detail URLs', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cloudpeak-sitemap-'))
+  await mkdir(join(dir, 'web'))
+  await writeFile(join(dir, 'web/sitemap.xml'), '<?xml version="1.0"?><urlset><url><loc>https://web.example/</loc></url><url><loc>https://web.example/dogs.html</loc></url></urlset>')
+  const requests = []
+  const server = createGateway({
+    appOrigin: 'https://app.example', websiteOrigin: 'https://web.example',
+    appRoot: join(dir, 'web'), websiteRoot: join(dir, 'web'),
+    dataUrl: 'http://data.internal', storageUrl: 'http://storage.internal', supabaseUrl: 'https://auth.example',
+    fetchImpl: async (url, init) => {
+      requests.push({ url, init })
+      const rows = url.includes('/litters?')
+        ? [{ id: 'litter-1' }]
+        : [{ id: 'puppy-1' }]
+      return new Response(JSON.stringify(rows), { headers: { 'content-type': 'application/json' } })
+    },
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await rm(dir, { recursive: true, force: true })
+  })
+  const response = await new Promise((resolve, reject) => {
+    httpRequest(`http://127.0.0.1:${server.address().port}/sitemap.xml`, { headers: { host: 'web.example' } }, result => {
+      const chunks = []
+      result.on('data', chunk => chunks.push(chunk))
+      result.on('end', () => resolve(new Response(Buffer.concat(chunks), { status: result.statusCode, headers: result.headers })))
+    }).on('error', reject).end()
+  })
+  const xml = await response.text()
+  assert.equal(response.status, 200)
+  assert.match(response.headers.get('content-type'), /application\/xml/)
+  assert.match(xml, /https:\/\/web\.example\/dogs\.html/)
+  assert.match(xml, /https:\/\/web\.example\/litter-gallery\.html\?litter=litter-1/)
+  assert.match(xml, /https:\/\/web\.example\/puppy\.html\?puppy=puppy-1/)
+  assert.deepEqual(requests.map(request => request.url), [
+    'http://data.internal/rest/v1/litters?select=id',
+    'http://data.internal/rest/v1/puppies?select=id',
+  ])
+  assert.equal(requests[0].init.headers.Range, '0-999')
+})
+
+test('website sitemap reports public-data failures instead of serving a stale list', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'cloudpeak-sitemap-error-'))
+  await mkdir(join(dir, 'web'))
+  await writeFile(join(dir, 'web/sitemap.xml'), '<urlset><url><loc>https://web.example/</loc></url></urlset>')
+  const server = createGateway({
+    appOrigin: 'https://app.example', websiteOrigin: 'https://web.example',
+    appRoot: join(dir, 'web'), websiteRoot: join(dir, 'web'),
+    dataUrl: 'http://data.internal', storageUrl: 'http://storage.internal', supabaseUrl: 'https://auth.example',
+    fetchImpl: async () => new Response('unavailable', { status: 503 }),
+  })
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  t.after(async () => {
+    await new Promise(resolve => server.close(resolve))
+    await rm(dir, { recursive: true, force: true })
+  })
+  const response = await new Promise((resolve, reject) => {
+    httpRequest(`http://127.0.0.1:${server.address().port}/sitemap.xml`, { headers: { host: 'web.example' } }, result => {
+      result.resume()
+      result.on('end', () => resolve(result.statusCode))
+    }).on('error', reject).end()
+  })
+  assert.equal(response, 503)
+})

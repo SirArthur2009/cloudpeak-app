@@ -17,6 +17,41 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
     }
   }
   const siteOrigins = [...sites.values()].map(site => site.origin)
+  const readPublicIds = async table => {
+    const ids = []
+    const pageSize = 1000
+    for (let offset = 0; ; offset += pageSize) {
+      const response = await fetchImpl(`${dataUrl}/rest/v1/${table}?select=id`, {
+        headers: { Range: `${offset}-${offset + pageSize - 1}`, 'Range-Unit': 'items' },
+        signal: AbortSignal.timeout(proxyTimeoutMs),
+      })
+      if (!response.ok) throw new Error(`Public ${table} query failed with HTTP ${response.status}.`)
+      const rows = await response.json()
+      if (!Array.isArray(rows) || rows.some(row => !row || row.id == null)) throw new Error(`Public ${table} query returned invalid rows.`)
+      ids.push(...rows.map(row => String(row.id)))
+      if (rows.length < pageSize) return ids
+    }
+  }
+  const escapeXml = value => value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&apos;')
+  const createSitemap = async () => {
+    const staticXml = await readFile(resolve(websiteRoot, 'sitemap.xml'), 'utf8')
+    const urls = [...staticXml.matchAll(/<loc>([^<]+)<\/loc>/g)].map(match => match[1])
+    if (!urls.length) throw new Error('Static sitemap contains no URLs.')
+    const canonicalOrigin = new URL(websiteOrigin).origin
+    if (urls.some(value => new URL(value).origin !== canonicalOrigin)) throw new Error('Static sitemap contains an unexpected origin.')
+    const [litters, puppies] = await Promise.all([readPublicIds('litters'), readPublicIds('puppies')])
+    for (const [path, parameter, ids] of [
+      ['/litter-gallery.html', 'litter', litters],
+      ['/puppy.html', 'puppy', puppies],
+    ]) {
+      for (const id of ids) {
+        const url = new URL(path, canonicalOrigin)
+        url.searchParams.set(parameter, id)
+        urls.push(url.href)
+      }
+    }
+    return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${[...new Set(urls)].map(value => `  <url><loc>${escapeXml(value)}</loc></url>`).join('\n')}\n</urlset>\n`
+  }
   return createServer(async (req, res) => {
     res.setHeader('X-Content-Type-Options', 'nosniff')
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
@@ -66,6 +101,18 @@ export function createGateway({ appOrigin, websiteOrigin, appAliases = [], websi
           else await pipeline(upstream.body, res)
         }
         return
+      }
+      if (url.pathname === '/sitemap.xml' && !site.app) {
+        if (!['GET', 'HEAD'].includes(req.method)) return send(405, { error: 'Use GET or HEAD.' })
+        try {
+          const sitemap = await createSitemap()
+          res.writeHead(200, { 'Content-Type': mime['.xml'], 'Cache-Control': 'public, max-age=300' })
+          return res.end(req.method === 'HEAD' ? undefined : sitemap)
+        } catch (error) {
+          console.error('Sitemap generation failed:', error.message)
+          res.writeHead(503, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+          return res.end(req.method === 'HEAD' ? undefined : 'Sitemap temporarily unavailable.')
+        }
       }
       if (!['GET','HEAD'].includes(req.method)) return send(405, { error: 'Use GET or HEAD.' })
       if (url.pathname === '/cloudpeak-test-config.js' && !site.app) {
